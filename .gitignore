@@ -1,0 +1,8 @@
+.idea/
+.git/
+build/
+tmp/
+
+
+.DS_Store
+kKO
