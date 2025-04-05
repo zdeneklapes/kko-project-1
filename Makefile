@@ -1,10 +1,11 @@
 # --------------------------------------------------------
 # Basic Variables
 # --------------------------------------------------------
-EXECUTABLE := kko
+EXECUTABLE := lz_codec
 SRCDIR     := src
 INCDIR     := include
 BUILDDIR   := build
+INCLUDES   := -I$(INCDIR) -Ithird_party/argparse -Ithird_party/libdivsufsort
 
 # --------------------------------------------------------
 # Collect Sources, Objects, Dependencies
@@ -20,9 +21,9 @@ DEPENDENCIES := $(OBJECTS:.o=.d)
 CXX := g++
 
 DEBUG_FLAGS   := -g -O0
-RELEASE_FLAGS := -O3
+RELEASE_FLAGS := -O3 -Werror
 
-CXXFLAGS := -std=c++17 -fms-extensions -Wall -Wextra -Werror -pedantic -fsanitize=address -fsanitize=leak
+CXXFLAGS := -std=c++17 -fms-extensions -Wall -Wextra -pedantic -fsanitize=address -fsanitize=leak
 
 LDFLAGS :=
 LDLIBS   := -lm
@@ -49,7 +50,7 @@ $(EXECUTABLE): $(OBJECTS)
 # Compile each .cpp => .o in build/, generating .d files
 $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -I$(INCDIR) -MMD -MP -c $< -o $@
+	$(CXX) $(CXXFLAGS) -I$(INCDIR) -I$(INCLUDES) -MMD -MP -c $< -o $@
 
 # Remove build artifacts
 clean:
@@ -72,3 +73,22 @@ docker-run:
 
 # Include dependency files if they exist
 -include $(DEPENDENCIES)
+
+
+.PHONY: clang-format
+clang-format:
+	clang-format -i $(SRCDIR)/*.cpp $(INCDIR)/*.h
+
+.PHONY: clang-tidy
+clang-tidy:
+	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp $(INCDIR)/*.h
+
+valgrind: $(EXECUTABLE)
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=valgrind.log ./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/out/out.txt -w 512 -c
+
+run: $(EXECUTABLE)
+	mkdir -p tmp/out
+	./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/tests/out/out.txt -w 512 -c
+
+bear: ## Create compilation database
+	bear $(MAKE) all

@@ -39,7 +39,11 @@ RUN <<EOF
         tar \
         tree \
         wget \
-        mpich
+        mpich \
+        cloc \
+        clang-format \
+        clang-tidy \
+        bear
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 EOF

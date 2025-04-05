@@ -1,8 +1,13 @@
 .idea/
+.vscode/
 .git/
 build/
 tmp/
+third_party/
 
 
+*.log
 .DS_Store
 kKO
+lz_codec
+compile_commands.json

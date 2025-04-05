@@ -1,6 +1,9 @@
 # Cryptography project 2
 
-## Implementation of the SHA-256 algorithm and extension length attack
+## Task:
+https://moodle.vut.cz/pluginfile.php/1114694/mod_resource/content/1/kko.proj.zadani25.pdf
+
+## Implementation of encoding and compression
 
 ## Author: 
 - Zdeněk Lapeš <lapes.zdenek@gmail.com> (xlapes02, 230614)
@@ -11,23 +14,15 @@
 make RELEASE=1
 ```
 
-or with debug information
+or with DEBUG information
 
 ```bash
 make
 ```
 
-## Functionality
-All required functionality was implemented and tested as was described in the assignment.
-
-**Examples provided in the assignment were tested and are working as expected:**
-
+## Testing
 ```bash
-echo -ne "zprava" | ./kry -c
-echo -ne "zprava" | ./kry -s -k heslo
-echo -ne "zprava" | ./kry -v -k heslo -m 23158796a45a9392951d9a72dffd6a539b14a07832390b937b94a80ddb6dc18e
-echo -ne "message" | ./kry -v -k password -m 23158796a45a9392 951d9a72dffd6a539b14a07832390b937b94a80ddb6dc18e
-echo -ne "zprava" | ./kry -e -n 5 -a ==message -m 23158796a45a9392951d9a72dffd6a539b14a07832390b937b94a80ddb6dc18e
+# TODO
 ```
 
 
