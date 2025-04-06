@@ -4,3 +4,5 @@ Zobrazit je mozne napr. na https://codestation.ch/ pokud se pouzije nastaveni:
 Width: 512
 Height: 512
 Predefined format: Grayscale 8-bit
+
+Soubory s priponou RAW jsou surova 8-bitova

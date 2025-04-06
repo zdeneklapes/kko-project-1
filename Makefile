@@ -21,9 +21,10 @@ DEPENDENCIES := $(OBJECTS:.o=.d)
 CXX := g++
 
 DEBUG_FLAGS   := -g -O0
+#-fsanitize=address -fsanitize=leak
 RELEASE_FLAGS := -O3 -Werror
 
-CXXFLAGS := -std=c++17 -fms-extensions -Wall -Wextra -pedantic -fsanitize=address -fsanitize=leak
+CXXFLAGS := -std=c++17 -fms-extensions -Wall -Wextra -pedantic
 
 LDFLAGS :=
 LDLIBS   := -lm
@@ -54,11 +55,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 
 # Remove build artifacts
 clean:
-	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE)
-
-# Example run target
-run1: $(EXECUTABLE)
-	./$(EXECUTABLE)
+	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE) compile_commands.json valgrind.log
 
 # Example packaging target (adjust files as needed)
 pack:
@@ -84,11 +81,14 @@ clang-tidy:
 	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp $(INCDIR)/*.h
 
 valgrind: $(EXECUTABLE)
-	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --log-file=valgrind.log ./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/out/out.txt -w 512 -c
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose ./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/tests/out/out.txt -w 512 -c
 
 run: $(EXECUTABLE)
-	mkdir -p tmp/out
-	./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/tests/out/out.txt -w 512 -c
+	mkdir -p tmp/tests/out
+	./$(EXECUTABLE) -i tmp/tests/in/kko.proj.data/info.txt -o tmp/tests/out/info.txt -w 512 -c
+
+check-sizes:
+	du -sh zadani/kko.proj.data/info.txt tmp/tests/out/out.txt
 
 bear: ## Create compilation database
 	bear $(MAKE) all
