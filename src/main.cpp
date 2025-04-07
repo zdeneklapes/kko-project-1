@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -27,16 +28,17 @@
 //------------------------------------------------------------------------------
 static const std::size_t FLAG_SIZE_BITS = 1; // LZSS typical
 
-static const std::size_t WINDOW_SIZE_BITS = 13; // LZSS typical
-static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS) - 1;
+static const std::size_t OFFSET_SIZE_BITS = 13; // LZSS typical
+static const std::size_t LENGTH_SIZE_BITS = 5;
 
-static const std::size_t LOOKAHEAD_SIZE_BITS = 5;
-static const std::size_t LOOKAHEAD_SIZE = (1 << LOOKAHEAD_SIZE_BITS);
+// static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS);
+// static const std::size_t LOOKAHEAD_SIZE = (1 << LOOKAHEAD_SIZE_BITS);
 
 static const std::size_t MIN_MATCH_LENGTH = 3;
 static const std::size_t LITERAL_SIZE = MIN_MATCH_LENGTH - 1;
 static const std::size_t LITERAL_SIZE_BITS = LITERAL_SIZE * 8;
-static const std::size_t HASH_TABLE_SIZE = 8192; // Adjust as needed
+static const std::size_t CHARACTER_SIZE_BITS = 8;
+// static const std::size_t HASH_TABLE_SIZE = 8192; // Adjust as needed
 
 //------------------------------------------------------------------------------
 // Macros
@@ -64,52 +66,12 @@ static const std::size_t HASH_TABLE_SIZE = 8192; // Adjust as needed
  * Simple structure to store match information.
  */
 struct lz_match {
-    bool is_compressed = false;
+    bool found = false;
     std::size_t offset = 0;
     std::size_t length = 0;
 };
 
 std::size_t wrap_index(std::size_t i, std::size_t buffer_size);
-
-/**
- * Buffer
- */
-struct Buffer {
-    char *window = nullptr;
-    char *lookahead = nullptr;
-    std::size_t window_head = 0;    // Points always on the next position to write character to
-    std::size_t lookahead_head = 0; // Points always on the currently read character
-
-    Buffer() {
-        window = new char[WINDOW_SIZE];
-        lookahead = new char[LOOKAHEAD_SIZE];
-        memset(window, 0, WINDOW_SIZE);
-        memset(lookahead, 0, LOOKAHEAD_SIZE);
-    }
-
-    ~Buffer() {
-        delete[] window;
-        delete[] lookahead;
-    }
-
-    char *get_lookahead_current() { return &this->lookahead[wrap_index(this->lookahead_head + 1, LOOKAHEAD_SIZE)]; };
-
-    void print_window() {
-        DEBUG_PRINT_LITE("Window head: %zu\n", this->window_head);
-        for (std::size_t i = 0; i < WINDOW_SIZE; ++i) {
-            DEBUG_PRINT_LITE("%c", this->window[i]);
-        }
-        DEBUG_PRINT_LITE("%c", '\n');
-    }
-
-    void print_lookahead() {
-        DEBUG_PRINT_LITE("Lookahead head: %zu\n", this->lookahead_head);
-        for (std::size_t i = 0; i < LOOKAHEAD_SIZE; ++i) {
-            DEBUG_PRINT_LITE("%c", this->lookahead[i]);
-        }
-        DEBUG_PRINT_LITE("%c", '\n');
-    }
-};
 
 // Encoded structure
 struct token {
@@ -163,23 +125,15 @@ class File;
 
 class Program {
   public:
-    // Heap-allocated pointer to the ArgumentParser instance.
-    argparse::ArgumentParser *args;
-    File *files;
-    Buffer *buffers;
-    //    HashTable *hash_table;
+    argparse::ArgumentParser *args = nullptr;
+    File *files = nullptr;
+    Buffer *buffers = nullptr;
 
     // Constructor and Destructor.
-    Program()
-        : args(nullptr), buffers(new Buffer())
-    //                hash_table(new HashTable())
-    {}
+    Program() {}
 
     ~Program() {
-        delete args;
-        delete buffers;
-        delete files; // Close files
-                      //        delete hash_table;
+        delete args; // TODO[fixme]: Segmentation fault
     }
 
     // Parse command-line arguments.
@@ -238,6 +192,75 @@ class Program {
     }
 };
 
+/**
+ * Buffer
+ */
+struct Buffer {
+    std::deque<char> window;
+    std::deque<char> lookahead;
+
+    std::size_t max_window_size = 1 << OFFSET_SIZE_BITS;
+    std::size_t max_lookahead_size = 1 << LENGTH_SIZE_BITS;
+
+    Buffer() {
+        // NOTE: We do nto need to resize buffers
+        //        window.resize(max_window_size);
+        //        lookahead.resize(max_lookahead_size);
+    }
+
+    ~Buffer() {}
+
+    void debug_print_window() {
+        if (DEBUG) {
+            std::string output(window.begin(), window.end());
+            std::cout << "Window (size: " << window.size() << "): " << output << std::endl;
+        }
+    }
+
+    void debug_print_lookahead() {
+        if (DEBUG) {
+            std::string output(lookahead.begin(), lookahead.end());
+            std::cout << "Lookahead (size: " << lookahead.size() << "): " << output << std::endl;
+        }
+    }
+
+    lz_match brute_force_search() {
+        lz_match best_match = {false, 0, 0};
+
+        /// DEBUG
+        //        DEBUG_PRINT_LITE("Brute force search BEFORE%c", '\n');
+        //        this->debug_print_window();
+        //        this->debug_print_lookahead();
+
+        // Iterate over each possible starting position in the window.
+        for (std::size_t i = 0; i < window.size(); i++) {
+            std::size_t match_length = 0;
+            // Compare the window starting at 'i' with the lookahead buffer.
+            while (match_length < lookahead.size() && (i + match_length) < window.size() &&
+                   window[i + match_length] == lookahead[match_length]) {
+                match_length++;
+            }
+            // Update best_match if a longer sequence is found.
+            if (match_length > best_match.length) {
+                best_match.found = true;
+                best_match.length = match_length;
+                // Offset is defined as the distance from the end of the window.
+                best_match.offset = window.size() - i;
+            }
+        }
+        if (best_match.length < MIN_MATCH_LENGTH) {
+            best_match.found = false;
+        }
+
+        /// DEBUG
+        //        DEBUG_PRINT_LITE("Brute force search AFTER%c", '\n');
+        //        this->debug_print_window();
+        //        this->debug_print_lookahead();
+
+        return best_match;
+    }
+};
+
 class File {
   public:
     // Retrieve input/output filenames from Program
@@ -268,8 +291,9 @@ class File {
         file.seekg(0, std::ios::beg);
 
         // Allocate a buffer to hold the file's contents.
-        char *buffer = new char[static_cast<size_t>(size)];
-        memset(buffer, 0, size);
+        const auto size_with_null_index = static_cast<size_t>(size) + 1;
+        char *buffer = new char[size_with_null_index];
+        memset(buffer, 0, size_with_null_index);
 
         // Read the file data into the buffer.
         if (!file.read(buffer, size)) {
@@ -287,18 +311,19 @@ class File {
         if (!std::filesystem::exists(in_filepath)) {
             throw std::runtime_error("Input file does not exist");
         }
-        //        in = std::ifstream(in_filepath, std::ios::binary);
         out = std::ofstream(out_filepath, std::ios::binary);
-
-        //        if ((in = fopen(in_filepath.c_str(), "rb")) == NULL) {
-        //            throw std::runtime_error("Input file does not exist");
-        //        }
-        //
-        //        fread(buffer, sizeof(char), width * width, in);
-        //        buffer_length = strlen(buffer); // TODO fix this
         auto [buffer, buffer_size] = readBinaryFileToCharArray(in_filepath);
         this->buffer = buffer;
         this->buffer_size = buffer_size;
+
+        const bool is_empty_file = buffer_size == 0;
+        if (is_empty_file) {
+            this->EOF_reached = true;
+        }
+
+        // Print buffer
+        DEBUG_PRINT_LITE("Buffer size: %zu | buffer: ", buffer_size);
+        std::cout << std::string(buffer, buffer_size) << std::endl;
     }
 
     ~File() {
@@ -333,15 +358,17 @@ class File {
     //        //        return true;
     //    }
 
-    bool get_char() {
+    char get_char() {
         current_char = buffer[buffer_head];
         const long long unsigned int width = program.args->get<int>("-w");
+
         buffer_head++;
         if (buffer_head == buffer_size) {
             EOF_reached = true;
-            return false;
+            return current_char;
         }
-        return true;
+
+        return current_char;
     }
 
     bool write_char(uint8_t in_byte) {
@@ -414,269 +441,165 @@ class BitsetWriter {
     }
 };
 
+// Helper class to read bits from the input file.
+class BitsetReader {
+  public:
+    BitsetReader(Program &program) : program(program), bits_remaining(0) {}
+
+    // Reads 'count' bits (from MSB side) and returns them as an unsigned integer.
+    uint32_t read_bits(uint32_t count) {
+        uint32_t result = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            if (bits_remaining == 0) {
+                if (program.files->EOF_reached) {
+                    // If no more data is available, break early.
+                    break;
+                }
+                // Read next byte from input (as an unsigned char).
+                uint8_t next_byte = static_cast<uint8_t>(program.files->get_char());
+                buffer = std::bitset<8>(next_byte);
+                bits_remaining = 8;
+            }
+            // Read the next bit (from MSB side in our current byte)
+            bool bit = buffer[bits_remaining - 1];
+            bits_remaining--;
+            result = (result << 1) | bit;
+        }
+        return result;
+    }
+
+  private:
+    Program &program;
+    std::bitset<8> buffer;
+    int bits_remaining;
+};
+
 //------------------------------------------------------------------------------
 // Functions
 //------------------------------------------------------------------------------
-char update_buffers(Program &program) {
+char shift_buffers_and_read_new_char(Program &program) {
     auto *buffers = program.buffers;
     auto *files = program.files;
 
-    files->get_char();
-    const auto new_char = files->current_char;
-    //    const auto _eof = EOF;
-    //    DEBUG_PRINT_LITE("Is EOF: %c", (int)new_char == _eof);
+    /// DEBUG
+    //    DEBUG_PRINT_LITE("Updating buffers BEFORE%c", '\n');
+    //    buffers->debug_print_window();
+    //    buffers->debug_print_lookahead();
 
-    const auto lookahead_index_1 = wrap_index(buffers->lookahead_head + 1, LOOKAHEAD_SIZE);
-    char output_char = buffers->lookahead[lookahead_index_1];
+    char char_to_add = buffers->lookahead.front();
+    buffers->lookahead.pop_front();
+    if (buffers->window.size() >= buffers->max_window_size) {
+        buffers->window.pop_back();
+    }
+    buffers->window.push_back(char_to_add);
 
-    // Update windows
-    const auto window_index = wrap_index(buffers->window_head, WINDOW_SIZE);
-    buffers->window[window_index] = output_char;
-
-    const auto lookahead_index_2 = wrap_index(buffers->lookahead_head + 1, LOOKAHEAD_SIZE);
-    if (files->EOF_reached) {
-        buffers->lookahead[lookahead_index_2] = '\0';
-    } else {
-        buffers->lookahead[lookahead_index_2] = new_char;
+    if (!files->EOF_reached) {
+        buffers->lookahead.push_back(files->get_char());
     }
 
-    // Update heads
-    CYCLIC_INCREMENT(buffers->window_head, WINDOW_SIZE);
-    CYCLIC_INCREMENT(buffers->lookahead_head, LOOKAHEAD_SIZE);
-
-    return output_char;
+    /// DEBUG
+    //    DEBUG_PRINT_LITE("Updating buffers AFTER%c", '\n');
+    //    buffers->debug_print_window();
+    //    buffers->debug_print_lookahead();
+    //    DEBUG_PRINT_LITE("------------------%c", '\n');
 }
 
 void process_is_compressed(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
-    Buffer *buffers = program.buffers;
+    DEBUG_PRINT("Start%c", '\n');
+
     bitset_writer.write_bits(1, FLAG_SIZE_BITS);
-    bitset_writer.write_bits(match.offset, WINDOW_SIZE_BITS);
-    bitset_writer.write_bits(match.length, LOOKAHEAD_SIZE_BITS);
+    bitset_writer.write_bits(match.offset, OFFSET_SIZE_BITS);
+    bitset_writer.write_bits(match.length, LENGTH_SIZE_BITS);
 
     // Update buffers
     for (std::size_t i = 0; i < match.length; ++i) {
-        //        DEBUG_PRINT_LITE("Updating buffer: %zu%c", i, '\n');
-        update_buffers(program);
+        shift_buffers_and_read_new_char(program);
     }
 }
 
 void process_is_literal(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
     Buffer *buffers = program.buffers;
 
+    DEBUG_PRINT("Start%c", '\n');
+
+    /// DEBUG
+    //    DEBUG_PRINT_LITE("Updating buffers literal BEFORE%c", '\n');
+    //    buffers->debug_print_window();
+    //    buffers->debug_print_lookahead();
+
     bitset_writer.write_bits(0, FLAG_SIZE_BITS);
-    char char1 = buffers->lookahead[wrap_index(buffers->lookahead_head + 1, LOOKAHEAD_SIZE)];
-    char char2 = buffers->lookahead[wrap_index(buffers->lookahead_head + 2, LOOKAHEAD_SIZE)];
-    uint16_t literal = (char1 << 8) | char2;
-    bitset_writer.write_bits(literal, LITERAL_SIZE_BITS);
 
-    // Update buffers
-    for (std::size_t i = 0; (i < LITERAL_SIZE) && strcmp(buffers->get_lookahead_current(), "\0") != 0; ++i) {
-        //        DEBUG_PRINT_LITE("Updating buffer: %zu%c", i, '\n');
-        update_buffers(program);
+    // Read
+    char char1 = buffers->lookahead.front();
+    shift_buffers_and_read_new_char(program);
+    bitset_writer.write_bits(char1, CHARACTER_SIZE_BITS);
+
+    if (buffers->lookahead.empty()) {
+        return;
     }
-}
 
-//// Constructor: (if you need to initialize members, do it here)
-// HashTable::HashTable() {
-//     // You may leave this empty if nothing special is needed.
-// }
-//
-//// Destructor
-// HashTable::~HashTable() {
-//     // Clean-up if required.
-// }
-//
-// void HashTable::init_search_structures(Program &program) {
-//     // Assume that Program has a pointer 'buffers' of type Buffer*
-//     // and that the sliding window (buffers->window) is pre-filled with a known character,
-//     // for example, a space ' '.
-//     auto *buffers = program.buffers;
-//     hash_table.clear();
-//     std::size_t hash_key = compute_hash(0, buffers->window, WINDOW_SIZE);
-//     // Insert the substring starting at position 0.
-//     hash_table[hash_key].insert(0);
-// }
-//
-// void HashTable::add_string(std::size_t character_index_in_sliding_window, Program &program) {
-//     auto *buffers = program.buffers;
-//     std::size_t hash_key = compute_hash(character_index_in_sliding_window, buffers->window, WINDOW_SIZE);
-//     hash_table[hash_key].insert(character_index_in_sliding_window);
-// }
-//
-// void HashTable::remove_string(std::size_t character_index_in_sliding_window, Program &program) {
-//     auto *buffers = program.buffers;
-//     std::size_t hash_key = compute_hash(character_index_in_sliding_window, buffers->window, WINDOW_SIZE);
-//     auto it = hash_table.find(hash_key);
-//     if (it != hash_table.end()) {
-//         it->second.erase(character_index_in_sliding_window);
-//         if (it->second.empty()) {
-//             hash_table.erase(it);
-//         }
-//     }
-// }
-//
-// lz_match HashTable::find_match(Program &program) {
-//     auto *buffers = program.buffers;
-//     lz_match best{NO, 0, 0};
-//
-//     // Compute the hash of the lookahead buffer (starting at index 0)
-//     std::size_t hash_key = compute_hash(0, buffers->lookahead, LOOKAHEAD_SIZE);
-//     auto mapIter = hash_table.find(hash_key);
-//     if (mapIter == hash_table.end()) {
-//         best.length = 1; // per original behavior when no match exists
-//         return best;
-//     }
-//
-//     // Iterate over candidate positions in the sliding window.
-//     const auto &positions = mapIter->second;
-//     for (auto pos: positions) {
-//         std::size_t match_len = 0;
-//         while (match_len < LOOKAHEAD_SIZE) {
-//             std::size_t idx = wrap_index(pos + match_len, WINDOW_SIZE);
-//             if (buffers->window[idx] != buffers->lookahead[match_len]) {
-//                 break;
-//             }
-//             ++match_len;
-//         }
-//         if (match_len > best.length) {
-//             best.length = match_len;
-//             best.offset = pos;
-//             if (match_len == LOOKAHEAD_SIZE) {
-//                 break; // perfect match found
-//             }
-//         }
-//     }
-//
-//     return best;
-// }
+    char char2 = buffers->lookahead.front();
+    shift_buffers_and_read_new_char(program);
+    bitset_writer.write_bits(char2, CHARACTER_SIZE_BITS);
 
-lz_match brute_force_search(Program &program) {
-    //    Buffer *buffers = program.buffers;
-    char *window = program.buffers->window;
-    char *lookahead = program.buffers->lookahead;
-    std::size_t window_head = program.buffers->window_head;
-    std::size_t lookahead_head = program.buffers->lookahead_head;
-    lz_match match = {false, 0, 0};
-
-    const auto length_of_window = strlen(window);
-    const auto length_of_lookahead = strlen(lookahead);
-
-    // Iterate over the entire sliding window to find the longest match
-    for (std::size_t window_index_1 = 0; window_index_1 < WINDOW_SIZE && window_index_1 < length_of_window;
-         window_index_1++) {
-        std::size_t current_length = 0;
-        // Continue comparing until the end of the lookahead or a mismatch
-        auto is_possible_to_find_better_match = [&](std::size_t current_length_lambda) {
-            const auto lookahead_char_1 = &lookahead[wrap_index(lookahead_head + current_length + 1, LOOKAHEAD_SIZE)];
-            const auto result = (current_length_lambda < LOOKAHEAD_SIZE) && (strcmp(lookahead_char_1, "\0") != 0) &&
-                                (current_length_lambda < length_of_lookahead);
-            return result;
-        };
-        //        const auto is_possible_to_find_better_match =
-        //            (current_length < LOOKAHEAD_SIZE) && (lookahead_char_1 != '\0') && (current_length <
-        //            length_of_lookahead);
-        while (is_possible_to_find_better_match(current_length)) {
-            const auto window_index_2 = wrap_index(window_index_1 + current_length, WINDOW_SIZE);
-            const auto window_char_2 = window[window_index_2];
-            const auto lookahead_index_2 = wrap_index(lookahead_head + current_length + 1, LOOKAHEAD_SIZE);
-            const auto lookahead_char_2 = lookahead[lookahead_index_2];
-            const auto is_match = window_char_2 == lookahead_char_2;
-            if (!is_match) { // Go to check next character
-                break;
-            }
-            current_length++;
-        }
-        // Update best match if current match meets the minimum requirement and is longer than previous
-        const auto is_better_match = current_length >= MIN_MATCH_LENGTH && current_length > match.length;
-        if (is_better_match) {
-            match.is_compressed = true;
-            match.offset = window_index_1;
-            match.length = current_length;
-            const auto is_maximum_match_reached = current_length == LOOKAHEAD_SIZE;
-            if (is_maximum_match_reached) { // Finish
-                break;                      // Maximum possible match reached
-            }
-        }
-    }
-    return match;
+    /// DEBUG
+    //    DEBUG_PRINT_LITE("Updating buffers literal AFTER%c", '\n');
+    //    buffers->debug_print_window();
+    //    buffers->debug_print_lookahead();
 }
 
 void init_lookahead_buffer(Program &program) {
-    DEBUG_PRINT("%c", '\n');
-    auto *buffers = program.buffers;
-    buffers->lookahead_head = 0;
-    bool is_fine_to_continue = true;
-    while (is_fine_to_continue) {
-        program.files->get_char();
-        const auto char_to_add = program.files->current_char;
-        const auto index_to_add = wrap_index(buffers->lookahead_head, LOOKAHEAD_SIZE);
-        buffers->lookahead[index_to_add] = char_to_add;
-        CYCLIC_INCREMENT(buffers->lookahead_head, LOOKAHEAD_SIZE);
+    //    DEBUG_PRINT("%c", '\n');
+    Buffer *buffers = program.buffers;
 
-        //
-        const auto whole_lookahead_buffer_was_loaded = program.buffers->lookahead_head == 0; // We are back at index 0
-        is_fine_to_continue = !whole_lookahead_buffer_was_loaded && !program.files->EOF_reached;
+    //    DEBUG_PRINT_LITE("Lookahead size: %zu%c", buffers->lookahead.size(), '\n');
+
+    for (std::size_t i = 0; i < buffers->max_lookahead_size && !program.files->EOF_reached; i++) {
+        char char_to_add = program.files->get_char();
+        //        DEBUG_PRINT_LITE("Adding char to lookahead: %c%c", char_to_add, '\n');
+        buffers->lookahead.push_back(char_to_add); // TODO[fixme]: SIGSEGV
     }
-    //    DEBUG_PRINT_LITE("===Loaded lookahead buffer%c", '\n');
+
+    const auto lookahead_string = std::string(buffers->lookahead.begin(), buffers->lookahead.end());
+    /// DEBUG
+    DEBUG_PRINT_LITE("After initialization%c", '\n');
+    buffers->debug_print_window();
+    buffers->debug_print_lookahead();
+    DEBUG_PRINT_LITE("------------------%c", '\n');
 }
 
-// token_t process_compression_result(Program &program, lz_match &match) {
-//     DEBUG_PRINT_LITE("===Processing compression result%c", '\n');
-//     auto output = std::string();
-//
-//     auto *buffers = program.buffers;
-//     //    auto *hash_table = program.hash_table;
-//     auto *files = program.files;
-//     token_t token;
-//
-//     if (match.is_compressed == YES) {
-//         assert(match.length >= MIN_MATCH_LENGTH);
-//
-//         for (std::size_t i = 0; i < match.length && !files->EOF_reached;
-//              ++i) { // NOTE: Here can not be EOF_reached condition
-//
-//             // TODO: Update heads
-//             //  TODO:          update_buffers(program);
-//             // TODO: Recalculate hash table
-//         }
-//     } else {
-//         assert(match.length < MIN_MATCH_LENGTH);
-//         for (std::size_t i = 0; i < match.length && !files->EOF_reached; ++i) {
-//             // Read new bytes and shift window and lookahead
-//             files->read_char();
-//             //            DEBUG_PRINT_LITE("Reading new byte: %c%c", files->current_char, '\n');
-//
-//             output += update_buffers(program);
-//             // TODO: Recalculate hash table
-//         }
-//     }
-//
-//     return output;
+// bool has_something_to_process(std::size_t i, lz_match &match, const char *current) {
+//     const auto foo = ((i < match.length) || (i < LITERAL_SIZE)) && (strcmp(current, "\0") != 0);
+//     return foo;
 // }
-
-bool has_something_to_process(std::size_t i, lz_match &match, const char *current) {
-    const auto foo = ((i < match.length) || (i < LITERAL_SIZE)) && (strcmp(current, "\0") != 0);
-    return foo;
-}
 
 void process_end(Program &program, BitsetWriter &bitset_writer) {
     // NOTE: Also possible that lookahead_head at teh end and we read just a few char before '\0'
     //       but it's OK because we want to read from lookahead_head till '\0' and that's the end
-    DEBUG_PRINT_LITE("Process end%c", '\n');
-
     Buffer *buffers = program.buffers;
 
-    while (strcmp(buffers->get_lookahead_current(), "\0") != 0) {
-        lz_match match = brute_force_search(program);
-        if (match.is_compressed) {
+    DEBUG_PRINT("Start%c", '\n');
+    buffers->debug_print_window();
+    buffers->debug_print_lookahead();
+    DEBUG_PRINT_LITE("------------------%c", '\n');
+
+    while (!buffers->lookahead.empty()) {
+        lz_match match = buffers->brute_force_search();
+
+        /// DEBUG
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found, match.offset,
+                         match.length);
+
+        if (match.found) {
             process_is_compressed(program, match, bitset_writer);
         } else { // match.is_compressed == NO
             process_is_literal(program, match, bitset_writer);
         }
     }
 
-    // Write EOF token and flush bitset
-    bitset_writer.write_bits('\0', 1);
+    // Flush bitset (write last byte)
     bitset_writer.flush();
 }
 
@@ -685,40 +608,120 @@ void process_end(Program &program, BitsetWriter &bitset_writer) {
 //------------------------------------------------------------------------------
 // TODO:   static void compress_adaptive(const Program &program);
 // TODO:   static decompress(const Program &program);
-static void compress_static(Program &program) {
-    DEBUG_PRINT("%c", '\n');
+void compress_static(Program &program) {
+    //    DEBUG_PRINT("%c", '\n');
     Buffer *buffers = program.buffers;
     BitsetWriter bitset_writer(program);
 
     init_lookahead_buffer(program);
 
     int tmp_i = 0;
-    while (true) {
+    while (!program.buffers->lookahead.empty()) {
         tmp_i++;
+        lz_match match = buffers->brute_force_search();
 
-        lz_match match = brute_force_search(program);
-//        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | lookahead: %s | lookahead_head: %zu | window: %s | window_head: %zu%c",
-//                         match.is_compressed, match.offset, match.length,
-//                         buffers->lookahead
-//                         '\n');
+        /// DEBUG
+        DEBUG_PRINT_LITE("Before process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found, match.offset,
+                         match.length);
 
-        if (match.is_compressed) {
+        if (match.found) {
             process_is_compressed(program, match, bitset_writer);
-        } else { // match.is_compressed == NO
+        } else {
             process_is_literal(program, match, bitset_writer);
-            //            DEBUG_PRINT_LITE("%d\n", buffers->window[buffers->window_head]);
         }
 
-        if (program.files->EOF_reached) {
-            DEBUG_PRINT("%s", "EOF: continue to process end\n");
-            break;
-        }
+        /// DEBUG
+        DEBUG_PRINT_LITE("After process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found, match.offset,
+                         match.length);
 
-        //        buffers->print_lookahead();
+//        if (program.files->EOF_reached) {
+//            DEBUG_PRINT("%s", "EOF: continue to process end\n");
+//            break;
+//        }
     }
 
     // Process end
-    process_end(program, bitset_writer);
+//    process_end(program, bitset_writer);
+
+    bitset_writer.flush();
+}
+
+void decompress_compressed(Program &program, BitsetReader &bitset_reader) {
+    Buffer *buffers = program.buffers;
+
+    uint32_t offset = bitset_reader.read_bits(OFFSET_SIZE_BITS);
+    uint32_t length = bitset_reader.read_bits(LENGTH_SIZE_BITS);
+
+    // For each character in the match, copy from the sliding window.
+    for (uint32_t i = 0; i < length; i++) {
+        // Compute the starting position:
+        // The token's offset is defined relative to the end of the current window.
+        // It is assumed that the window contains at least 'offset' characters.
+        if (buffers->window.empty() || buffers->window.size() < offset) {
+            throw std::runtime_error("Invalid offset during decompression.");
+        }
+        std::size_t pos = buffers->window.size() - offset;
+        // For overlapping copies, recompute the source index on every iteration.
+        char c = buffers->window[pos];
+        // Write the character to the output file.
+        program.files->write_char(static_cast<uint8_t>(c));
+        // Append the character to the sliding window.
+        buffers->window.push_back(c);
+        // If the window exceeds its maximum size, remove the oldest character.
+        if (buffers->window.size() > buffers->max_window_size) {
+            buffers->window.pop_front();
+        }
+    }
+}
+
+void decompress_literal(Program &program, BitsetReader &bitset_reader) {
+    Buffer *buffers = program.buffers;
+
+    uint32_t literal = bitset_reader.read_bits(LITERAL_SIZE_BITS);
+    // Extract two characters (8 bits each).
+    char char1 = (literal >> 8) & 0xFF;
+    char char2 = literal & 0xFF;
+    // Write the literal characters.
+    program.files->write_char(static_cast<uint8_t>(char1));
+    program.files->write_char(static_cast<uint8_t>(char2));
+    // Update the sliding window with each literal.
+    buffers->window.push_back(char1);
+    if (buffers->window.size() > buffers->max_window_size) {
+        buffers->window.pop_front();
+    }
+    buffers->window.push_back(char2);
+    if (buffers->window.size() > buffers->max_window_size) {
+        buffers->window.pop_front();
+    }
+}
+
+void decompress(Program &program) {
+    BitsetReader bitset_reader(program);
+    Buffer *buffers = program.buffers;
+    // Clear any existing data in the sliding window.
+    buffers->window.clear();
+
+    // Continue until we reach the end of the compressed file.
+    // (Note: The compressed file is read via BitsetReader using program.files->get_char())
+    while (!program.files->EOF_reached) {
+        // Read the flag bit.
+        uint32_t flag = bitset_reader.read_bits(FLAG_SIZE_BITS);
+        // If we weren't able to read a flag bit, break out.
+        if (program.files->EOF_reached) {
+            break;
+        }
+        if (flag == 1) { // Compressed token.
+            decompress_compressed(program, bitset_reader);
+        } else { // Literal token.
+            decompress_literal(program, bitset_reader);
+        }
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -726,19 +729,6 @@ static void compress_static(Program &program) {
 //------------------------------------------------------------------------------
 // Wrap the index so that it “circles around” the buffer.
 std::size_t wrap_index(std::size_t i, std::size_t buffer_size) { return i % buffer_size; }
-
-/**
- * Source: https://github.com/MichaelDipperstein/lzss
- */
-std::size_t compute_hash(std::size_t pos, char *buffer, std::size_t buffer_size) {
-    std::size_t hash_key = 0;
-    for (std::size_t i = 0; i <= (WINDOW_SIZE + 1); i++) {
-        std::size_t idx = wrap_index(pos + i, buffer_size);
-        hash_key = (hash_key << 5) ^ buffer[idx];
-        hash_key %= HASH_TABLE_SIZE;
-    }
-    return hash_key;
-}
 
 Program *init_program(int argc, char **argv) {
     // ------------------
@@ -753,11 +743,14 @@ Program *init_program(int argc, char **argv) {
     auto output_file = program->args->get<std::string>("-o");
     auto *file = new File(input_file, output_file, *program);
     program->files = file;
+    auto buffers = new Buffer();
+    program->buffers = buffers;
     return program;
 }
 
 int main(int argc, char **argv) {
-    Program *program;
+    Program *program = nullptr;
+
     try {
         program = init_program(argc, argv);
     } catch (const std::exception &err) {
@@ -773,7 +766,7 @@ int main(int argc, char **argv) {
             compress_static(*program); // TODO
             // TODO: compress_adaptive(*program);
         } else if (program->args->get<bool>("-d")) {
-            DEBUG_PRINT_LITE("TODO%c", '\n');
+            decompress(*program);
         }
         // TODO: decompress(*program);
     } catch (const std::exception &err) {
@@ -789,6 +782,7 @@ int main(int argc, char **argv) {
     // ------------------
     // Clean up
     // ------------------
+    delete program->buffers;
     delete program;
     return 0;
 }
