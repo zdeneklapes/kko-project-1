@@ -74,18 +74,25 @@ docker-run:
 
 .PHONY: clang-format
 clang-format:
-	clang-format -i $(SRCDIR)/*.cpp $(INCDIR)/*.h
+	clang-format -i $(SRCDIR)/*.cpp
 
 .PHONY: clang-tidy
 clang-tidy:
-	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp $(INCDIR)/*.h
+	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp
 
 valgrind: $(EXECUTABLE)
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose ./$(EXECUTABLE) -i zadani/kko.proj.data/info.txt -o tmp/tests/out/out.txt -w 512 -c
 
 run: $(EXECUTABLE)
 	mkdir -p tmp/tests/out
-	./$(EXECUTABLE) -i tmp/tests/in/kko.proj.data/info.txt -o tmp/tests/out/info.txt -w 512 -c
+	./$(EXECUTABLE) -i tmp/tests/in/t1.txt -o tmp/tests/out/t1.txt -w 512 -c
+
+run_1: $(EXECUTABLE)
+	mkdir -p tmp/tests/out
+	./$(EXECUTABLE) -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
+
+diff:
+	diff tmp/tests/in/t1.txt tmp/tests/out/t1.txt && echo "OK" || echo "FAIL"
 
 check-sizes:
 	du -sh zadani/kko.proj.data/info.txt tmp/tests/out/out.txt
