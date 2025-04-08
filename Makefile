@@ -48,7 +48,14 @@ endif
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t10.txt -o tmp/tests/out/t10.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t11.txt -o tmp/tests/out/t11.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t12.txt -o tmp/tests/out/t12.txt -w 512 -c
-ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/cb2.raw -o tmp/tests/out/cb2.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/df1h.raw -o tmp/tests/out/df1h.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/df1hvx.raw -o tmp/tests/out/df1hvx.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/df1v.raw -o tmp/tests/out/df1v.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/shp.raw -o tmp/tests/out/shp.raw -w 512 -c
+ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/shp1.raw -o tmp/tests/out/shp1.raw -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/shp2.raw -o tmp/tests/out/shp2.raw -w 512 -c
 
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t1.txt -o tmp/tests/in/t1-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t2.txt -o tmp/tests/in/t2-decompressed.txt -w 512 -d
@@ -63,7 +70,14 @@ ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t10.txt -o tmp/tests/in/t10-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t11.txt -o tmp/tests/in/t11-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t12.txt -o tmp/tests/in/t12-decompressed.txt -w 512 -d
-ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb.raw -o tmp/tests/in/kko.proj.data/cb.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb.raw -o tmp/tests/in/kko.proj.data/cb.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb2.raw -o tmp/tests/in/kko.proj.data/cb2.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1h.raw -o tmp/tests/in/kko.proj.data/df1h.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1hvx.raw -o tmp/tests/in/kko.proj.data/df1hvx.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1v.raw -o tmp/tests/in/kko.proj.data/df1v.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/shp.raw -o tmp/tests/in/kko.proj.data/shp.raw-decompressed.txt -w 512 -d
+ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/shp1.raw -o tmp/tests/in/kko.proj.data/shp1.raw-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/shp2.raw -o tmp/tests/in/kko.proj.data/shp2.raw-decompressed.txt -w 512 -d
 
 
 # --------------------------------------------------------
