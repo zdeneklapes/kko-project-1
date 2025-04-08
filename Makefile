@@ -37,7 +37,7 @@ endif
 
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t1.txt -o tmp/tests/out/t1.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t2.txt -o tmp/tests/out/t2.txt -w 512 -c
-ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t3.txt -o tmp/tests/out/t3.txt -w 512 -c
+#ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t3.txt -o tmp/tests/out/t3.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t4.txt -o tmp/tests/out/t4.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t5.txt -o tmp/tests/out/t5.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t6-a.txt -o tmp/tests/out/t6-a.txt -w 512 -c
@@ -45,11 +45,12 @@ ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t3.txt -o tmp/tests/out/t3.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t7.txt -o tmp/tests/out/t7.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t8.txt -o tmp/tests/out/t8.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t9.txt -o tmp/tests/out/t9.txt -w 512 -c
+ARGUMENTS_COMPRESSOR := -i tmp/tests/in/t10.txt -o tmp/tests/out/t10.txt -w 512 -c
 #ARGUMENTS_COMPRESSOR := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
 
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t1.txt -o tmp/tests/in/t1-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t2.txt -o tmp/tests/in/t2-decompressed.txt -w 512 -d
-ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t3.txt -o tmp/tests/in/t3-decompressed.txt -w 512 -d
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t3.txt -o tmp/tests/in/t3-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t4.txt -o tmp/tests/in/t4-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t5.txt -o tmp/tests/in/t5-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t6-a.txt -o tmp/tests/in/t6-a-decompressed.txt -w 512 -d
@@ -57,6 +58,7 @@ ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t3.txt -o tmp/tests/in/t3-decompresse
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t7.txt -o tmp/tests/in/t7-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t8.txt -o tmp/tests/in/t8-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t9.txt -o tmp/tests/in/t9-decompressed.txt -w 512 -d
+ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t10.txt -o tmp/tests/in/t10-decompressed.txt -w 512 -d
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb.raw -o tmp/tests/in/kko.proj.data/cb.raw-decompressed.txt -w 512 -d
 
 
@@ -105,8 +107,11 @@ clang-format:
 clang-tidy:
 	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp
 
-valgrind: $(EXECUTABLE)
+valgrind-compress: $(EXECUTABLE)
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose ./$(EXECUTABLE) $(ARGUMENTS_COMPRESSOR)
+
+valgrind-decompress: $(EXECUTABLE)
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose ./$(EXECUTABLE) $(ARGUMENTS_DECOMPRESSOR)
 
 run-compressor: $(EXECUTABLE)
 	./$(EXECUTABLE) $(ARGUMENTS_COMPRESSOR)
