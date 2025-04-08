@@ -181,6 +181,7 @@ struct Buffer {
     std::size_t max_lookahead_size = (1 << LENGTH_SIZE_BITS);
 
     Buffer() {
+        DEBUG_PRINT_LITE("max_window_size: %zu | max_lookahead_size: %zu\n", max_window_size, max_lookahead_size);
         // NOTE: We do nto need to resize buffers
         //        window.resize(max_window_size);
         //        lookahead.resize(max_lookahead_size);
@@ -216,8 +217,7 @@ struct Buffer {
             // Compare the window starting at 'i' with the lookahead buffer.
             // NOTE: here must be -1 in: lookahead.size()-1 (because when decompressing it overflow the 5 bits so max
             // match length is 31 chars nto whole 32 chars)
-            while (match_length < lookahead.size() - 1 && (i + match_length) < window.size() &&
-                   window[i + match_length] == lookahead[match_length]) {
+            while (match_length < lookahead.size() - 1 && (i + match_length) < window.size() && window[i + match_length] == lookahead[match_length]) {
                 match_length++;
             }
             // Update best_match if a longer sequence is found.
@@ -225,7 +225,7 @@ struct Buffer {
                 match.found = true;
                 match.length = match_length;
                 // Offset is defined as the distance from the end of the window.
-                match.offset = window.size() - i;
+                match.offset = window.size() - i - 1;
             }
 
             // Stop if nothing longer can be found
@@ -309,14 +309,13 @@ class File {
         //        DEBUG_PRINT_LITE("Buffer size: %zu | buffer: %s\n", buffer_size, buffer);
 
         // Print each byte in its bit representation.
-        //        std::cout << "Buffer bytes in bits (buffer size: " << buffer_size << "):" << std::endl;
-        //        for (std::size_t i = 0; i < buffer_size; i++) {
-        //            // Create a bitset representing the 8 bits of the byte.
-        //            std::bitset<8> bits(static_cast<unsigned char>(buffer[i]));
-        //            // Print the byte index, its character value (if printable) and the bits.
-        //            std::cout << "buffer[" << i << "]: " << bits << std::endl;
-        //        }
-        //        std::cout << std::string(buffer, buffer_size) << std::endl;
+        std::cout << "Buffer bytes in bits (buffer size: " << buffer_size << "):" << std::endl;
+        for (std::size_t i = 0; i < buffer_size; i++) {
+            // Create a bitset representing the 8 bits of the byte.
+            std::bitset<8> bits(static_cast<unsigned char>(buffer[i]));
+            // Print the byte index, its character value (if printable) and the bits.
+            std::cout << "buffer[" << i << "]: " << bits << std::endl;
+        }
     }
 
     ~File() {
@@ -415,6 +414,7 @@ class BitsetWriter {
 
     // Flush any remaining bits by padding with 0s.
     void flush() {
+        DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Flushing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
         if (bits_filled > 0) {
             // Before flushing, record the final padding bits.
             flush_byte(true);
@@ -432,22 +432,17 @@ class BitsetWriter {
         uint8_t header_byte = static_cast<uint8_t>(header.final_padding_bits);
 
         std::bitset<8> bits(header_byte);
-        std::cout << "Header bits: " << bits << std::endl;
+
+        std::cout << "Padding: " << final_padding_bits << " | Header bits: " << bits << std::endl;
 
         program.files->write_char(header_byte);
 
         // Write each flushed byte.
-        for (auto byte : flushed_bytes) {
-            std::bitset<8> bits(byte);
-            std::cout << "Byte bits: " << bits << std::endl;
-            program.files->write_char(byte);
+        for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
+            std::cout << "flushed_bytes[" << i << "]: " << std::bitset<8>(flushed_bytes[i]) << std::endl;
+            program.files->write_char(flushed_bytes[i]);
         }
-
-        DEBUG_PRINT_LITE("Padding: %d\n", final_padding_bits);
     }
-
-    // Optionally, a getter for the final padding bits.
-    int get_final_padding_bits() const { return final_padding_bits; }
 
   private:
     // Flush the current buffer. If 'is_final' is true, record the padding bits.
@@ -456,6 +451,9 @@ class BitsetWriter {
             final_padding_bits = 8 - bits_filled;
         } else {
             final_padding_bits = 0;
+        }
+        if (buffer.size() < 8) {
+            throw std::runtime_error("Buffer size is smaller than 8");
         }
         // Print debug information.
         //        std::cout << "Compressed bits (buffer: " << bits_filled << "): " << buffer << " | Real value: " <<
@@ -466,6 +464,7 @@ class BitsetWriter {
         uint8_t byte = static_cast<uint8_t>(buffer.to_ulong());
         // Store the byte in our vector.
         flushed_bytes.push_back(byte);
+        std::cout << "Compressed bits: " << buffer << " | flushed char in bits: " << std::bitset<8>(byte) << std::endl;
         // Reset the buffer and the counter.
         bits_filled = 0;
         buffer.reset();
@@ -523,11 +522,12 @@ class BitsetReader {
         return result;
     }
 
-    bool has_remaining_bits() const {
-        const auto is_at_the_end = program.files->buffer_head == program.files->buffer_size;
-        const auto is_at_the_end_with_remaining_bits = header->final_padding_bits == bits_remaining;
-        const auto result = is_at_the_end && is_at_the_end_with_remaining_bits;
-        return !result;
+    bool is_at_the_end_of_file() const {
+        const auto is_at_the_end = program.files->buffer_head >= program.files->buffer_size;
+        const auto is_at_the_end_exact_remaining_bits = header->final_padding_bits == bits_remaining;
+        const auto result = is_at_the_end && is_at_the_end_exact_remaining_bits;
+//        const auto result = is_at_the_end;
+        return result;
     }
 
   private:
@@ -552,7 +552,7 @@ void shift_buffers_and_read_new_char(Program &program) {
     char char_to_add = buffers->lookahead.front();
     buffers->lookahead.pop_front();
     if (buffers->window.size() >= buffers->max_window_size) {
-        buffers->window.pop_back();
+        buffers->window.pop_front();
     }
     buffers->window.push_back(char_to_add);
 
@@ -594,14 +594,17 @@ void process_is_literal(Program &program, lz_match &match, BitsetWriter &bitset_
     char char1 = buffers->lookahead.front();
     shift_buffers_and_read_new_char(program);
     bitset_writer.write_bits(char1, CHARACTER_SIZE_BITS);
+//    DEBUG_PRINT_LITE("char1: %c | char1_bits: %s\n", char1, std::bitset<8>(static_cast<unsigned char>(char1)).to_string().c_str());
 
     if (buffers->lookahead.empty()) {
+        DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Lookahead is empty!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
         return;
     }
 
     char char2 = buffers->lookahead.front();
     shift_buffers_and_read_new_char(program);
     bitset_writer.write_bits(char2, CHARACTER_SIZE_BITS);
+//    DEBUG_PRINT_LITE("char2: %c | char2_bits: %s\n", char2, std::bitset<8>(static_cast<unsigned char>(char2)).to_string().c_str());
 
     /// DEBUG
     //    DEBUG_PRINT_LITE("Updating buffers literal AFTER%c", '\n');
@@ -645,8 +648,9 @@ void compress_static(Program &program) {
         DEBUG_PRINT_LITE("Before process match%c", '\n');
         buffers->debug_print_window();
         buffers->debug_print_lookahead();
-        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found, match.offset,
-                         match.length);
+        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
+        //        match.offset,
+        //                         match.length);
 
         if (match.found) {
             process_is_compressed(program, match, bitset_writer);
@@ -658,9 +662,8 @@ void compress_static(Program &program) {
         DEBUG_PRINT_LITE("After process match%c", '\n');
         buffers->debug_print_window();
         buffers->debug_print_lookahead();
-        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
-        //        match.offset,
-        //                         match.length);
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found, match.offset,
+                         match.length, tmp_i);
     }
 
     // Process end
@@ -670,18 +673,9 @@ void compress_static(Program &program) {
     bitset_writer.write_all_to_file();
 }
 
-void decompress_compressed(Program &program, BitsetReader &bitset_reader) {
+void decompress_compressed(Program &program, BitsetReader &bitset_reader, std::size_t offset, std::size_t length) {
     //    DEBUG_PRINT("Start%c", '\n');
     Buffer *buffers = program.buffers;
-
-    uint32_t offset = bitset_reader.read_bits(OFFSET_SIZE_BITS);
-    uint32_t length = bitset_reader.read_bits(LENGTH_SIZE_BITS);
-
-//    if (offset == 8191) {
-//        DEBUG_PRINT_LITE("%c\n", buffers->window[8192]);
-//    }
-
-    std::cout << "is_compressed: " << 1 << " | offset: " << offset << " | length: " << length << std::endl;
 
     // For each character in the match, copy from the sliding window.
     for (uint32_t i = 0; i < length; i++) {
@@ -692,9 +686,9 @@ void decompress_compressed(Program &program, BitsetReader &bitset_reader) {
             throw std::runtime_error("Invalid offset during decompression.");
         }
 
-        std::size_t pos = buffers->window.size() - offset;
+        std::size_t pos = buffers->window.size() - offset - 1;
 
-        DEBUG_PRINT_LITE("Window size: %zu | offset: %d | pos: %d\n", buffers->window.size(), offset, pos);
+        //        DEBUG_PRINT_LITE("Window size: %zu | offset: %d | pos: %d\n", buffers->window.size(), offset, pos);
 
         // For overlapping copies, recompute the source index on every iteration.
         char char1 = buffers->window[pos];
@@ -706,13 +700,13 @@ void decompress_compressed(Program &program, BitsetReader &bitset_reader) {
         // Append the character to the sliding window.
         buffers->window.push_back(char1);
         // If the window exceeds its maximum size, remove the oldest character.
-        if (buffers->window.size() >= buffers->max_window_size) {
+        if (buffers->window.size() > buffers->max_window_size) {
             buffers->window.pop_front();
         }
     }
 }
 
-void decompress_character(Program &program, BitsetReader &bitset_reader) {
+char decompress_character(Program &program, BitsetReader &bitset_reader) {
     //    DEBUG_PRINT("Start%c", '\n');
     Buffer *buffers = program.buffers;
 
@@ -727,38 +721,54 @@ void decompress_character(Program &program, BitsetReader &bitset_reader) {
     if (buffers->window.size() > buffers->max_window_size) {
         buffers->window.pop_front();
     }
+    return char1;
 }
+
 
 // --- Changed code in decompress ---
 void decompress(Program &program) {
     uint8_t header_byte = static_cast<uint8_t>(program.files->get_char());
     CompressionHeader header;
     header.final_padding_bits = header_byte & 0x07; // Lower 3 bits
-    std::cout << "Parsed header: final_padding_bits = " << int(header.final_padding_bits) << std::endl;
+    std::bitset<8> final_padding_bits(header.final_padding_bits);
+    std::cout << "Parsed header: final_padding_bits = " << int(header.final_padding_bits) << " | final_padding_bits: " << final_padding_bits << std::endl;
 
     BitsetReader bitset_reader(program, &header);
     Buffer *buffers = program.buffers;
     buffers->window.clear();
 
-    // Continue while there are still bytes or unread bits
-    while (bitset_reader.has_remaining_bits()) {
+    // Continue while there are still bytes or unread bit
+    std::size_t tmp_i = 0;
+    while (!bitset_reader.is_at_the_end_of_file()) {
+        tmp_i++;
         uint32_t flag = bitset_reader.read_bits(FLAG_SIZE_BITS);
+
         // If no flag could be read, exit the loop.
-        if (flag == 0 && !bitset_reader.has_remaining_bits() &&
-            program.files->buffer_head >= program.files->buffer_size) {
+        if (bitset_reader.is_at_the_end_of_file()) {
+            DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
             break;
         }
+
         if (flag == 1) { // Compressed token.
-            decompress_compressed(program, bitset_reader);
+            uint32_t offset = bitset_reader.read_bits(OFFSET_SIZE_BITS);
+            std::bitset<3> offset_bits(offset);
+            uint32_t length = bitset_reader.read_bits(LENGTH_SIZE_BITS);
+            std::bitset<3> length_bits(length);
+
+            std::cout << "------------------\nis_compressed: " << 1 << " | offset: " << offset << " | offset bits: " << offset_bits << " | length: " << length << " | length bits: " << length_bits << " | whole sequence: 1" << offset_bits << length_bits << " | tmp_i: " << tmp_i << std::endl;
+
+            decompress_compressed(program, bitset_reader, offset, length);
         } else { // Literal token.
-            DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n", 0, 0, 0);
-            decompress_character(program, bitset_reader);
-            if (!bitset_reader.has_remaining_bits()) {
-                DEBUG_PRINT_LITE("No more bits to decompress%c", '\n');
-                bitset_reader.has_remaining_bits();
+            DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
+            char char1 = decompress_character(program, bitset_reader);
+            const bool should_stop = bitset_reader.is_at_the_end_of_file();
+//            DEBUG_PRINT_LITE("should_stop: %d\n", should_stop);
+            if (should_stop) {
+                DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end INNER%c", '\n');
+                bitset_reader.is_at_the_end_of_file();
                 break;
             }
-            decompress_character(program, bitset_reader);
+            char char2 = decompress_character(program, bitset_reader);
         }
     }
 }
@@ -830,11 +840,11 @@ int main(int argc, char **argv) {
     }
 
     // Print the compresstion ratio
-    if (program->args->get<bool>("-c") && DEBUG) {
-        std::string inputFile = program->args->get<std::string>("-i");
-        std::string outputFile = program->args->get<std::string>("-o");
-        print_compression_ratio(inputFile, outputFile);
-    }
+    //    if (program->args->get<bool>("-c") && DEBUG) {
+    //        std::string inputFile = program->args->get<std::string>("-i");
+    //        std::string outputFile = program->args->get<std::string>("-o");
+    //        print_compression_ratio(inputFile, outputFile);
+    //    }
 
     // ------------------
     // Clean up
