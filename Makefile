@@ -60,23 +60,20 @@ endif
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t7.txt -o tmp/tests/in/t7-decompressed.txt -d
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t7.txt -o tmp/tests/out/t7.txt -w 512 -c
 
-ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t8.txt -o tmp/tests/out/t8.txt -w 512 -c
-ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t8.txt -o tmp/tests/in/t8-decompressed.txt -d
+#ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t8.txt -o tmp/tests/out/t8.txt -w 512 -c
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t8.txt -o tmp/tests/in/t8-decompressed.txt -d
 
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t9.txt -o tmp/tests/in/t9-decompressed.txt -d
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t9.txt -o tmp/tests/out/t9.txt -w 512 -c
 
-#ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t10.txt -o tmp/tests/out/t10.txt -w 512 -c
-#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t10.txt -o tmp/tests/in/t10-decompressed.txt -d
+ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t10.txt -o tmp/tests/out/t10.txt -w 512 -c
+ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t10.txt -o tmp/tests/in/t10-decompressed.txt -d
 
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t11.txt -o tmp/tests/in/t11-decompressed.txt -d
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t11.txt -o tmp/tests/out/t11.txt -w 512 -c
 
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t12.txt -o tmp/tests/out/t12.txt -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t12.txt -o tmp/tests/in/t12-decompressed.txt -w 512 -d
-
-#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tmp/tests/in/t13.txt -o tmp/tests/out/t13.txt -w 4 -c -a
-#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t13.txt -o tmp/tests/in/t13-decompressed.txt -d
 
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb.raw -o tmp/tests/in/kko.proj.data/cb.raw-decompressed.txt -d
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
@@ -101,6 +98,12 @@ ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t8.txt -o tmp/tests/in/t8-decompresse
 
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/shp2.raw -o tmp/tests/out/shp2.raw -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/shp2.raw -o tmp/tests/in/kko.proj.data/shp2.raw-decompressed.txt -d
+
+#-------------------------------------------------------------------------------
+# Adaptive compressor
+#-------------------------------------------------------------------------------
+#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tmp/tests/in/t13.txt -o tmp/tests/out/t13.txt -w 4 -c -a
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t13.txt -o tmp/tests/in/t13-decompressed.txt -d
 
 
 # --------------------------------------------------------

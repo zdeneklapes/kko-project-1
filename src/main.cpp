@@ -92,7 +92,7 @@ typedef struct token token_t;
 class CompressionHeader {
   public:
     unsigned padding_bits_count : 3;
-    unsigned mode : 1;          // static=0 vs. adaptive=1
+    unsigned mode : 1;             // static=0 vs. adaptive=1
     unsigned adaptive_passage : 1; // used only for sequential
 
     bool get_is_static() const { return mode == 0; }
@@ -393,6 +393,11 @@ class File {
                         block.push_back(buffer[index]);
                     }
                 }
+
+                if (read_vertically) {
+                    block = transpose_block(block);
+                }
+
                 adaptive_blocks.push_back(block);
             }
         }
@@ -410,27 +415,84 @@ class File {
         }
     }
 
+    void prepare_adaptive_blocks_use_written_data(int image_width) {
+        // Fill adaptive_blocks from written_data
+        int height = written_data.size() / image_width;
+        int blocks_per_row = image_width / BLOCK_W;
+        int blocks_per_col = height / BLOCK_H;
+
+        DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | height: %d | blocks per row: %d | blocks per "
+                         "col: %d | buffer_size: %zu\n",
+                         image_width, written_data.size() / image_width, blocks_per_row, blocks_per_col, written_data.size());
+
+        std::vector<std::vector<char>> blocks;
+
+        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
+            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
+                std::vector<char> block;
+                for (int y = 0; y < BLOCK_H; ++y) {
+                    int img_y = block_y * BLOCK_H + y;
+                    if (img_y >= height)
+                        break;
+                    for (int x = 0; x < BLOCK_W; ++x) {
+                        int img_x = block_x * BLOCK_W + x;
+                        if (img_x >= image_width)
+                            break;
+                        std::size_t index = img_y * image_width + img_x;
+                        block.push_back(written_data[index]);
+                    }
+                }
+                blocks.push_back(block);
+            }
+        }
+    }
+
     std::vector<char> transpose_block(const std::vector<char> &block) {
-        std::vector<char> result(256, 0);
-        for (int y = 0; y < 16; ++y) {
-            for (int x = 0; x < 16; ++x) {
-                result[x * 16 + y] = block[y * 16 + x];
+        std::vector<char> result(BLOCK_H * BLOCK_W, 0);
+        for (int y = 0; y < BLOCK_H; ++y) {
+            for (int x = 0; x < BLOCK_W; ++x) {
+                result[x * BLOCK_H + y] = block[y * BLOCK_W + x];
             }
         }
         return result;
     }
 
+    //    char get_char_adaptive(const bool vertically=false) {
+    //        if (current_block_index >= adaptive_blocks.size()) {
+    //            EOF_reached = true;
+    //            return 0;
+    //        }
+    //        std::vector<char> &block = adaptive_blocks[current_block_index];
+    //        if (current_block_pos >= block.size()) {
+    //            current_block_index++;
+    //            current_block_pos = 0;
+    //            return get_char();
+    //        }
+    //        return block[current_block_pos++];
+    //    }
+
     char get_char_adaptive() {
+        // Lazy initialization of adaptive blocks if they haven't been prepared
+        if (adaptive_blocks.empty()) {
+            const int image_width = program.args->get<int>("-w");
+            if (image_width <= 0) {
+                throw std::runtime_error("Image width (-w) must be set and > 0 for adaptive reading.");
+            }
+            prepare_adaptive_blocks(image_width);
+        }
+
         if (current_block_index >= adaptive_blocks.size()) {
             EOF_reached = true;
             return 0;
         }
+
         std::vector<char> &block = adaptive_blocks[current_block_index];
         if (current_block_pos >= block.size()) {
             current_block_index++;
             current_block_pos = 0;
-            return get_char();
+            return get_char_adaptive(); // recurse into next block
         }
+
         return block[current_block_pos++];
     }
 
@@ -445,40 +507,89 @@ class File {
 
     char get_char() {
         if (program.is_static_compress()) {
-            return get_char_sequential();
+            const char _char = get_char_sequential();
+            //            DEBUG_PRINT_LITE("STATIC get_char(): %c%c", current_char, '\n');
+            return _char;
         }
         if (program.is_adaptive_compress()) {
-            return get_char_adaptive();
+            const char _char = get_char_adaptive();
+            //            DEBUG_PRINT_LITE("ADAPTIVE get_char(): %c%c", current_char, '\n');
+            return _char;
         }
         // For decompression
-        return get_char_sequential();
+        const char _char = get_char_sequential();
+        //        DEBUG_PRINT_LITE("DEFAULT get_char(): %c%c", current_char, '\n');
+        return _char;
+    }
+
+    void seek_to_beginning_of_file() {
+        EOF_reached = false;
+        buffer_head = 0;
+        current_block_index = 0;
+        current_block_pos = 0;
+        current_char = buffer[0];
+        adaptive_blocks.clear();
     }
 
     bool write_char(uint8_t in_byte) {
-        // Debug print with a correct format (one %c and a newline)
-        //        DEBUG_PRINT_LITE("===Writing byte%c", '\n');
+        written_data.push_back(in_byte); // store before writing to file
 
-        // Check that the stream is open
-        //        assert(this->out.is_open());
-        if (!this->out.is_open()) {
-            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
-            return false;
-        }
+        //        if (!this->out.is_open()) {
+        //            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
+        //            return false;
+        //        }
+        //
+        //        this->out.put(static_cast<char>(in_byte));
+        //        this->out.flush();
+        //
+        //        if (this->out.fail()) {
+        //            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
+        //            return false;
+        //        }
+        //
+        //        return true;
+    }
 
-        // Write the byte to the file.
-        this->out.put(static_cast<char>(in_byte));
-
-        // Optionally flush to ensure the byte is written immediately.
-        this->out.flush();
-
-        // Check for errors.
-        //        assert(!this->out.fail());
-        if (this->out.fail()) {
-            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
-            return false;
-        }
-
+    bool write_char_to_written_data(uint8_t in_byte) {
+        written_data.push_back(in_byte); // store before writing to file
         return true;
+    }
+
+    void write_adaptive_blocks_to_file() {
+        if (!out.is_open()) {
+            throw std::runtime_error("Output stream is not open.");
+        }
+
+        const int blocks_per_row = program.get_width() / BLOCK_W;
+
+        for (int block_y = 0; block_y < adaptive_blocks.size() / blocks_per_row; ++block_y) {
+            for (int y = 0; y < BLOCK_H; ++y) {
+                for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
+                    const int block_index = block_y * blocks_per_row + block_x;
+                    const std::vector<char> &block = adaptive_blocks[block_index];
+                    for (int x = 0; x < BLOCK_W; ++x) {
+                        int index = y * BLOCK_W + x;
+                        if (index < block.size()) {
+                            out.put(block[index]);
+                        }
+                    }
+                }
+            }
+        }
+
+        out.flush();
+    }
+
+    void flush_written_data_to_file() {
+        if (!out.is_open()) {
+            throw std::runtime_error("Output stream is not open.");
+        }
+
+        for (uint8_t byte : written_data) {
+            out.put(static_cast<char>(byte));
+        }
+
+        out.flush(); // ensure all data is written
     }
 
     // Retrieve input/output filenames from Program
@@ -493,14 +604,16 @@ class File {
 #endif
     char *buffer = nullptr;
     std::size_t buffer_size;
-    long long unsigned int buffer_head = 0;
     std::vector<BlockHeader> block_headers;
-
     std::vector<std::vector<char>> adaptive_blocks; // blocks stored row-wise
-    std::size_t current_block_index = 0;
-    std::size_t current_block_pos = 0;
-    std::size_t block_size = 16 * 16;
+    unsigned long long int buffer_head = 0;
+    unsigned long long int current_block_index = 0;
+    unsigned long long int current_block_pos = 0;
+    unsigned long long int block_size = 16 * 16;
+    bool read_vertically = false;
+    std::vector<uint8_t> written_data; // stores written bytes for later access/debug
 };
+
 class BitsetWriter {
   public:
     BitsetWriter(Program &program) : program(program), bits_filled(0), buffer(0), final_padding_bits(0) {}
@@ -560,6 +673,7 @@ class BitsetWriter {
             }
             program.files->write_char(flushed_bytes[i]);
         }
+        program.files->flush_written_data_to_file();
     }
 
   private:
@@ -898,133 +1012,95 @@ void decompress(Program &program, CompressionHeader &header) {
             char char2 = decompress_character(program, bitset_reader);
         }
     }
+
+    program.files->flush_written_data_to_file();
 }
 }; // namespace StaticProcessor
 
 namespace AdaptiveProcessor {
-void init_lookahead_buffer_adaptive(Program &program, const std::vector<char> &block) {
-    //    DEBUG_PRINT("%c", '\n');
-    Buffer *buffers = program.buffers;
-
-    //    DEBUG_PRINT_LITE("Lookahead size: %zu%c", buffers->lookahead.size(), '\n');
-
-    for (std::size_t i = 0; i < block.size(); i++) {
-        char char_to_add = block[i];
-        //        DEBUG_PRINT_LITE("Adding char to lookahead: %c%c", char_to_add, '\n');
-        buffers->lookahead.push_back(char_to_add); // TODO[fixme]: SIGSEGV
-    }
-
-    //    const auto lookahead_string = std::string(buffers->lookahead.begin(), buffers->lookahead.end());
-    /// DEBUG
-    //    DEBUG_PRINT_LITE("After initialization%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
-    //    DEBUG_PRINT_LITE("------------------%c", '\n');
-}
-
-std::vector<uint8_t> horizontal(Program &program, const std::vector<char> &block, std::size_t i) {
-    //------------------------------------------------------------------------------
-    // Horizontal
-
-    Buffer *buffers = program.buffers;
-    auto *file = program.files;
-
-    std::deque<char> preserved_window;
-    std::deque<char> preserved_lookahead;
-
-    buffers->window = preserved_window;
-    buffers->lookahead = preserved_lookahead;
-    file->adaptive_blocks[i] = block;
-    file->current_block_index = i;
-    file->current_block_pos = 0;
-    init_lookahead_buffer_adaptive(program, block);
-
-    BitsetWriter writer_h(program);
-    while (!buffers->lookahead.empty()) {
-        lz_match match = buffers->brute_force_search();
-        if (match.found) {
-            StaticProcessor::compress_compressed(program, match, writer_h);
-        } else {
-            StaticProcessor::compress_literal(program, match, writer_h);
-        }
-    }
-    writer_h.flush();
-    std::vector<uint8_t> output_horizontal = writer_h.get_flushed_bytes();
-
-    return output_horizontal;
-}
-
-std::vector<uint8_t> vertical(Program &program, const std::vector<char> &block, std::size_t i) {
-    //------------------------------------------------------------------------------
-    // Vertical
-
-    Buffer *buffers = program.buffers;
-    auto *file = program.files;
-
-    std::deque<char> preserved_window;
-    std::deque<char> preserved_lookahead;
-
-    buffers->window = preserved_window;
-    buffers->lookahead = preserved_lookahead;
-    file->adaptive_blocks[i] = block;
-    file->current_block_index = i;
-    file->current_block_pos = 0;
-    init_lookahead_buffer_adaptive(program, block);
-
-    BitsetWriter writer_v(program);
-    while (!buffers->lookahead.empty()) {
-        lz_match match = buffers->brute_force_search();
-        if (match.found) {
-            StaticProcessor::compress_compressed(program, match, writer_v);
-        } else {
-            StaticProcessor::compress_literal(program, match, writer_v);
-        }
-    }
-    writer_v.flush();
-    std::vector<uint8_t> output_vertical = writer_v.get_flushed_bytes();
-    return output_vertical;
-}
-
 void compress(Program &program) {
+    Buffer *buffers = program.buffers;
     auto *file = program.files;
     BitsetWriter bitset_writer_horizontal(program);
     BitsetWriter bitset_writer_vertical(program);
 
+    DEBUG_PRINT_LITE("==========================================================\ncompression horizontal %c", '\n');
     // Compress horizontally
+    StaticProcessor::init_lookahead_buffer(program);
+    if (DEBUG) {
+        /// DEBUG
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+    }
+
     int tmp_i = 0;
     while (!program.buffers->lookahead.empty()) {
+        tmp_i++;
+        lz_match match = buffers->brute_force_search();
+
+        /// DEBUG
+        DEBUG_PRINT_LITE("Before process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
+        //        match.offset,
+        //                         match.length);
+
+        if (match.found) {
+            StaticProcessor::compress_compressed(program, match, bitset_writer_horizontal);
+        } else {
+            StaticProcessor::compress_literal(program, match, bitset_writer_horizontal);
+        }
+
+        /// DEBUG
+        DEBUG_PRINT_LITE("After process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found,
+                         match.offset, match.length, tmp_i);
     }
 
     // Compress vertically
+    DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c", '\n');
+    file->seek_to_beginning_of_file();
+    file->read_vertically = true;
+    buffers->lookahead.clear();
+    buffers->window.clear();
+    StaticProcessor::init_lookahead_buffer(program);
+    tmp_i = 0;
+    while (!program.buffers->lookahead.empty()) {
+        tmp_i++;
+        lz_match match = buffers->brute_force_search();
 
-    // Compress horizontally
-    //    for (std::size_t i = 0; i < file->adaptive_blocks.size(); ++i) {
-    //        DEBUG_PRINT_LITE("Adaptive block %zu\n", i);
-    //        init_lookahead_buffer_adaptive(program, file->adaptive_blocks[i]);
-    //        const auto &original_block = file->adaptive_blocks[i];
-    //        auto transposed_block = file->transpose_block(original_block);
-    //
-    //        auto output_horizontal = horizontal(program, original_block, i);
-    //        auto output_vertical = vertical(program, transposed_block, i);
-    //
-    //        //------------------------------------------------------------------------------
-    //        // Choose better
-    //        if (output_horizontal.size() <= output_vertical.size()) {
-    //            for (uint8_t b : output_horizontal) {
-    //                bitset_writer.write_bits(b, 8);
-    //            }
-    //        } else {
-    //            for (uint8_t b : output_vertical) {
-    //                bitset_writer.write_bits(b, 8);
-    //            }
-    //        }
-    //
-    //        //        // Preserve for next iteration
-    //        //        preserved_window = buffers->window;
-    //        //        preserved_lookahead = buffers->lookahead;
-    //    }
+        /// DEBUG
+        DEBUG_PRINT_LITE("Before process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
+        //        match.offset,
+        //                         match.length);
 
-    //    bitset_writer.write_all_to_file();
+        if (match.found) {
+            StaticProcessor::compress_compressed(program, match, bitset_writer_vertical);
+        } else {
+            StaticProcessor::compress_literal(program, match, bitset_writer_vertical);
+        }
+
+        /// DEBUG
+        DEBUG_PRINT_LITE("After process match%c", '\n');
+        buffers->debug_print_window();
+        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found,
+                         match.offset, match.length, tmp_i);
+    }
+
+    if (bitset_writer_horizontal.get_flushed_bytes().size() <= bitset_writer_vertical.get_flushed_bytes().size()) {
+        DEBUG_PRINT_LITE("Horizontal is smaller than vertical - writing horizontal%c", '\n');
+        bitset_writer_horizontal.write_all_to_file();
+    } else {
+        DEBUG_PRINT_LITE("Vertical is smaller than horizontal - writing vertical%c", '\n');
+        bitset_writer_vertical.write_all_to_file();
+    }
 }
 
 void decompress(Program &program, CompressionHeader &header) {
@@ -1035,44 +1111,64 @@ void decompress(Program &program, CompressionHeader &header) {
     auto *buffers = program.buffers;
     buffers->window.clear();
 
-    //    int width = program.args->get<int>("-w");
-    //    file->prepare_adaptive_blocks(width);
+    DEBUG_PRINT_LITE("Decompress static%c", '\n');
 
-    for (std::size_t i = 0; i < file->adaptive_blocks.size(); ++i) {
-        bool is_transposed = bitset_reader.read_bits(1);
-        file->adaptive_blocks[i].clear();
+    // Continue while there are still bytes or unread bit
+    std::size_t tmp_i = 0;
+    while (!bitset_reader.is_at_the_end_of_file()) {
+        tmp_i++;
+        uint32_t flag = bitset_reader.read_bits(FLAG_SIZE_BITS);
 
-        buffers->window.clear();
-
-        while (!bitset_reader.is_at_the_end_of_file()) {
-            uint32_t flag = bitset_reader.read_bits(1);
-            if (bitset_reader.is_at_the_end_of_file()) {
-                break;
-            }
-
-            if (flag == 1) {
-                uint32_t offset = bitset_reader.read_bits(OFFSET_SIZE_BITS);
-                uint32_t length = bitset_reader.read_bits(LENGTH_SIZE_BITS);
-                StaticProcessor::decompress_compressed(program, bitset_reader, offset, length);
-            } else {
-                char c1 = StaticProcessor::decompress_character(program, bitset_reader);
-                if (bitset_reader.is_at_the_end_of_file()) {
-                    break;
-                }
-                char c2 = StaticProcessor::decompress_character(program, bitset_reader);
-            }
-
-            // We stop if the block is fully filled
-            if (file->adaptive_blocks[i].size() >= file->block_size) {
-                break;
-            }
+        // If no flag could be read, exit the loop.
+        if (bitset_reader.is_at_the_end_of_file()) {
+            DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
+            break;
         }
 
-        // If transposed, transpose back
-        if (is_transposed) {
-            file->adaptive_blocks[i] = file->transpose_block(file->adaptive_blocks[i]);
+        if (flag == 1) { // Compressed token.
+            uint32_t offset = bitset_reader.read_bits(OFFSET_SIZE_BITS);
+            std::bitset<3> offset_bits(offset);
+            uint32_t length = bitset_reader.read_bits(LENGTH_SIZE_BITS);
+            std::bitset<3> length_bits(length);
+
+            if (DEBUG) {
+                std::cout << "------------------\nis_compressed: " << 1 << " | offset: " << offset
+                          << " | offset bits: " << offset_bits << " | length: " << length
+                          << " | length bits: " << length_bits << " | whole sequence: 1" << offset_bits << length_bits
+                          << " | tmp_i: " << tmp_i << std::endl;
+            }
+
+            StaticProcessor::decompress_compressed(program, bitset_reader, offset, length);
+        } else { // Literal token.
+            DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
+            char char1 = StaticProcessor::decompress_character(program, bitset_reader);
+            const bool should_stop = bitset_reader.is_at_the_end_of_file();
+            //            DEBUG_PRINT_LITE("should_stop: %d\n", should_stop);
+            if (should_stop) {
+                DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end INNER%c", '\n');
+                bitset_reader.is_at_the_end_of_file();
+                break;
+            }
+            char char2 = StaticProcessor::decompress_character(program, bitset_reader);
         }
     }
+
+    file->adaptive_blocks.clear();
+    file->prepare_adaptive_blocks_use_written_data(program.get_width());
+//    DEBUG_PRINT_LITE("written_data size: %zu\n", file->written_data.size());
+
+//    // Clear written_data before restoring to correct order
+//    file->written_data.clear();
+//
+//    // If originally transposed, reverse it
+//    if (header.get_is_vertical()) {
+//        for (auto &block : file->adaptive_blocks) {
+//            block = file->transpose_block(block);
+//        }
+//    }
+//
+//    // Write pixels block by block in raster scan order
+//    file->write_adaptive_blocks_to_file();
 }
 } // namespace AdaptiveProcessor
 
@@ -1086,8 +1182,10 @@ CompressionHeader pre_decompress(Program &program) {
     std::bitset<8> header_byte_bits(header_byte);
 
     if (DEBUG) {
-        std::cout << "header_byte bits: " << header_byte_bits << " | padding_bits_count: " << int(header.padding_bits_count) << " | mode: " << bool(header.mode)
-                  << "mode: " << bool(header.mode) << " | adaptive_passage: " << bool(header.adaptive_passage) << std::endl;
+        std::cout << "header_byte bits: " << header_byte_bits
+                  << " | padding_bits_count: " << int(header.padding_bits_count) << " | mode: " << bool(header.mode)
+                  << "mode: " << bool(header.mode) << " | adaptive_passage: " << bool(header.adaptive_passage)
+                  << std::endl;
     }
 
     return header;
