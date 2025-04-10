@@ -75,6 +75,9 @@ endif
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t12.txt -o tmp/tests/out/t12.txt -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t12.txt -o tmp/tests/in/t12-decompressed.txt -w 512 -d
 
+ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/t14.txt -o tmp/tests/out/t14.txt -w 512 -c
+ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/t14.txt -o tmp/tests/in/t14-decompressed.txt -d
+
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/cb.raw -o tmp/tests/out/cb.raw -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/cb.raw -o tmp/tests/in/kko.proj.data/cb.raw-decompressed.txt -d
 
@@ -84,8 +87,8 @@ endif
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/df1h.raw -o tmp/tests/out/df1h.raw -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1h.raw -o tmp/tests/in/kko.proj.data/df1h.raw-decompressed.txt -d
 
-ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/df1hvx.raw -o tmp/tests/out/df1hvx.raw -w 512 -c
-ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1hvx.raw -o tmp/tests/in/kko.proj.data/df1hvx.raw-decompressed.txt -d
+#ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/df1hvx.raw -o tmp/tests/out/df1hvx.raw -w 512 -c
+#ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/df1hvx.raw -o tmp/tests/in/kko.proj.data/df1hvx.raw-decompressed.txt -d
 
 #ARGUMENTS_COMPRESSOR_STATIC := -i tmp/tests/in/kko.proj.data/nk01.raw -o tmp/tests/out/nk01.raw -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tmp/tests/out/nk01.raw -o tmp/tests/in/kko.proj.data/nk01.raw-decompressed.txt -d

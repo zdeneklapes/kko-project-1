@@ -48,7 +48,7 @@ static const int BLOCK_H = 16;
 //------------------------------------------------------------------------------
 // Macros
 //------------------------------------------------------------------------------
-#define DEBUG (0)
+#define DEBUG (1)
 #define DEBUG_LITE (DEBUG)
 #define DEBUG_PRINT_LITE(fmt, ...)                                                                                     \
     do {                                                                                                               \
@@ -92,15 +92,18 @@ typedef struct token token_t;
 class CompressionHeader {
   public:
     unsigned padding_bits_count : 3;
-    unsigned mode : 1;    // static=0 vs. adaptive=1
-    unsigned passage : 1; // used only for adaptive: 0-horizontal, 1-vertical
-    unsigned width : 16;  // width of the image
+    unsigned mode : 1;          // static=0 vs. adaptive=1
+    unsigned passage : 1;       // used only for adaptive: 0-horizontal, 1-vertical
+    unsigned is_compressed : 1; // 0-not compressed, 1-compressed
+    unsigned width : 16;        // width of the image
 
     bool get_is_static() const { return mode == 0; }
     bool get_is_adaptive() const { return mode == 1; }
 
     bool get_is_horizontal() const { return passage == 0; }
     bool get_is_vertical() const { return passage == 1; }
+
+    bool get_is_compressed() const { return is_compressed == 1; }
 
     int get_width() const { return width; }
 };
@@ -381,29 +384,29 @@ class File {
 
         adaptive_blocks.clear();
 
-//        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-//            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-//                std::vector<char> block;
-//                for (int y = 0; y < BLOCK_H; ++y) {
-//                    int img_y = block_y * BLOCK_H + y;
-//                    if (img_y >= height)
-//                        break;
-//                    for (int x = 0; x < BLOCK_W; ++x) {
-//                        int img_x = block_x * BLOCK_W + x;
-//                        if (img_x >= image_width)
-//                            break;
-//                        std::size_t index = img_y * image_width + img_x;
-//                        block.push_back(buffer[index]);
-//                    }
-//                }
-//
-//                if (read_vertically) {
-//                    block = transpose_block(block);
-//                }
-//
-//                adaptive_blocks.push_back(block);
-//            }
-//        }
+        //        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
+        //            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
+        //                std::vector<char> block;
+        //                for (int y = 0; y < BLOCK_H; ++y) {
+        //                    int img_y = block_y * BLOCK_H + y;
+        //                    if (img_y >= height)
+        //                        break;
+        //                    for (int x = 0; x < BLOCK_W; ++x) {
+        //                        int img_x = block_x * BLOCK_W + x;
+        //                        if (img_x >= image_width)
+        //                            break;
+        //                        std::size_t index = img_y * image_width + img_x;
+        //                        block.push_back(buffer[index]);
+        //                    }
+        //                }
+        //
+        //                if (read_vertically) {
+        //                    block = transpose_block(block);
+        //                }
+        //
+        //                adaptive_blocks.push_back(block);
+        //            }
+        //        }
         std::size_t index = 0;
         for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
             for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
@@ -459,24 +462,24 @@ class File {
 
         //        std::vector<std::vector<char>> blocks;
 
-//        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-//            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-//                std::vector<char> block;
-//                for (int y = 0; y < BLOCK_H; ++y) {
-//                    int img_y = block_y * BLOCK_H + y;
-//                    if (img_y >= height)
-//                        break;
-//                    for (int x = 0; x < BLOCK_W; ++x) {
-//                        int img_x = block_x * BLOCK_W + x;
-//                        if (img_x >= image_width)
-//                            break;
-//                        std::size_t index = img_y * image_width + img_x;
-//                        block.push_back(written_data[index]);
-//                    }
-//                }
-//                adaptive_blocks.push_back(block);
-//            }
-//        }
+        //        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
+        //            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
+        //                std::vector<char> block;
+        //                for (int y = 0; y < BLOCK_H; ++y) {
+        //                    int img_y = block_y * BLOCK_H + y;
+        //                    if (img_y >= height)
+        //                        break;
+        //                    for (int x = 0; x < BLOCK_W; ++x) {
+        //                        int img_x = block_x * BLOCK_W + x;
+        //                        if (img_x >= image_width)
+        //                            break;
+        //                        std::size_t index = img_y * image_width + img_x;
+        //                        block.push_back(written_data[index]);
+        //                    }
+        //                }
+        //                adaptive_blocks.push_back(block);
+        //            }
+        //        }
         for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
             for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
                 std::vector<char> block;
@@ -698,26 +701,32 @@ class BitsetWriter {
     void write_all_to_file(const bool is_vertical = false) {
         this->flush(); // Add padding bits
 
+        bool compressed = true;
+        if (program.files->buffer_size < flushed_bytes.size()) {
+            compressed = false;
+        }
+
         // Create and populate the header.
         CompressionHeader header;
         header.padding_bits_count = final_padding_bits; // Only 3 bits are used.
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
+        header.is_compressed = compressed;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
 
         // Write the header as one byte. We pack header in the lower 3 bits.
         // We assume that header occupies the lower 3 bits and the upper bits are 0.
         // Split header into 3 bytes
-        uint8_t byte1 =
-            (header.padding_bits_count & 0b00000111) | ((header.mode & 0b1) << 3) | ((header.passage & 0b1) << 4);
+        uint8_t byte1 = (header.padding_bits_count & 0b00000111) | ((header.mode & 0b1) << 3) |
+                        ((header.passage & 0b1) << 4) | ((header.is_compressed & 0b1) << 5);
         uint8_t byte2 = static_cast<uint8_t>((header.width >> 0) & 0xFF); // Lower 8 bits of width
         uint8_t byte3 = static_cast<uint8_t>((header.width >> 8) & 0xFF); // Upper 8 bits of width
 
         if (DEBUG) {
             std::cout << "Padding: " << header.padding_bits_count << " | mode: " << bool(header.mode)
-                      << " | passage: " << bool(header.passage) << " | width: " << int(header.width)
-                      << std::endl;
+                      << " | passage: " << bool(header.passage) << " | is_compressed: " << bool(header.is_compressed)
+                      << " | width: " << header.width << "\n";
             std::cout << "Header bytes:\n";
             std::cout << "  byte1: " << std::bitset<8>(byte1) << "\n";
             std::cout << "  byte2: " << std::bitset<8>(byte2) << "\n";
@@ -730,11 +739,23 @@ class BitsetWriter {
         program.files->write_char(byte3);
 
         // Write each flushed byte.
-        for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
-            if (DEBUG) {
-                std::cout << "flushed_bytes[" << i << "]: " << std::bitset<8>(flushed_bytes[i]) << std::endl;
+        if (compressed) {
+            DEBUG_PRINT_LITE("COMPRESSED%c", '\n');
+            for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
+                if (DEBUG) {
+                    std::cout << "flushed_bytes[" << i << "]: " << std::bitset<8>(flushed_bytes[i]) << std::endl;
+                }
+                program.files->write_char(flushed_bytes[i]);
             }
-            program.files->write_char(flushed_bytes[i]);
+        } else {
+            DEBUG_PRINT_LITE("NOT COMPRESSED%c", '\n');
+            for (std::size_t i = 0; i < program.files->buffer_size; i++) {
+                if (DEBUG) {
+                    std::cout << "program.files->buffer[" << i << "]: " << std::bitset<8>(program.files->buffer[i]) << std::endl;
+                }
+                const auto _char = static_cast<char>(program.files->buffer[i]);
+                program.files->write_char(_char);
+            }
         }
         program.files->flush_written_data_to_file();
     }
@@ -761,7 +782,7 @@ class BitsetWriter {
         flushed_bytes.push_back(byte);
         if (DEBUG) {
             std::cout << "Compressed bits: " << buffer << " | flushed char in bits: " << std::bitset<8>(byte)
-                      << std::endl;
+                      << " | flushed char in uint8_t: " << byte << std::endl;
         }
         // Reset the buffer and the counter.
         bits_filled = 0;
@@ -1237,6 +1258,17 @@ void decompress(Program &program, CompressionHeader &header) {
 }
 } // namespace AdaptiveProcessor
 
+void decompress_not_compressed(Program &program, CompressionHeader &header) {
+    BitsetReader bitset_reader(program, header);
+    auto *file = program.files;
+    auto *buffers = program.buffers;
+    buffers->window.clear();
+    while (!program.files->EOF_reached) {
+        program.files->write_char(program.files->get_char());
+    }
+    program.files->flush_written_data_to_file();
+}
+
 CompressionHeader pre_decompress(Program &program) {
     uint8_t byte1 = static_cast<uint8_t>(program.files->get_char());
     uint8_t byte2 = static_cast<uint8_t>(program.files->get_char());
@@ -1246,6 +1278,7 @@ CompressionHeader pre_decompress(Program &program) {
     header.padding_bits_count = byte1 & 0b00000111;             // bits 0-2
     header.mode = (byte1 >> 3) & 0b1;                           // bit 3
     header.passage = (byte1 >> 4) & 0b1;                        // bit 4
+    header.is_compressed = (byte1 >> 5) & 0b1;                  // bit 5
     header.width = static_cast<unsigned>(byte2 | (byte3 << 8)); // 16-bit width
 
     std::bitset<8> b1(byte1), b2(byte2), b3(byte3);
@@ -1322,7 +1355,9 @@ int main(int argc, char **argv) {
                 std::cout << "Padding: " << int(header.padding_bits_count) << " | Mode: " << bool(header.mode)
                           << std::endl;
             }
-            if (header.get_is_static()) {
+            if (!header.get_is_compressed()) {
+                decompress_not_compressed(*program, header);
+            } else if (header.get_is_static()) {
                 StaticProcessor::decompress(*program, header);
             } else if (header.get_is_adaptive()) {
                 AdaptiveProcessor::decompress(*program, header);
