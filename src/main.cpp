@@ -26,8 +26,8 @@
 //------------------------------------------------------------------------------
 static const std::size_t FLAG_SIZE_BITS = 1;
 
-static const std::size_t OFFSET_SIZE_BITS = 3;
-static const std::size_t LENGTH_SIZE_BITS = 3;
+static const std::size_t OFFSET_SIZE_BITS = 13;
+static const std::size_t LENGTH_SIZE_BITS = 5;
 // static const std::size_t LENGTH_SIZE_BITS = 6; // TODO
 
 // static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS);
@@ -38,14 +38,14 @@ static const std::size_t LITERAL_SIZE = MIN_MATCH_LENGTH - 1;
 static const std::size_t LITERAL_SIZE_BITS = LITERAL_SIZE * 8;
 static const std::size_t CHARACTER_SIZE_BITS = 8;
 
-// static const int BLOCK_W = 16;
-// static const int BLOCK_H = 16;
-static const int BLOCK_W = 8;
-static const int BLOCK_H = 8;
-// static const int BLOCK_W = 4;
-// static const int BLOCK_H = 4;
-// static const int BLOCK_W = 2;
-// static const int BLOCK_H = 2;
+static const int BLOCK_W = 16;
+static const int BLOCK_H = 16;
+// static const int BLOCK_W = 8;
+// static const int BLOCK_H = 8;
+//  static const int BLOCK_W = 4;
+//  static const int BLOCK_H = 4;
+//  static const int BLOCK_W = 2;
+//  static const int BLOCK_H = 2;
 
 //------------------------------------------------------------------------------
 // Macros
@@ -696,24 +696,14 @@ class BitsetWriter {
     void write_all_to_file(const bool is_vertical = false) {
         this->flush(); // Add padding bits
 
-        //        bool compressed = program.files->buffer_size > flushed_bytes.size();
-        bool compressed = true;
-        if (DEBUG) {
-            std::cout << "compressed: " << compressed << " | buffer_size: " << program.files->buffer_size
-                      << " | flushed_bytes.size(): " << flushed_bytes.size() << std::endl;
-        }
-        //        bool compressed = true;
-        //        bool compressed = false;
-        //        if (DEBUG) {
-        //            compressed = false;
-        //        }
-
         // Create and populate the header.
         CompressionHeader header;
         header.padding_bits_count = final_padding_bits; // Only 3 bits are used.
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
-        header.is_file_compressed = compressed;
+        header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
+//        header.is_file_compressed = true;
+//        header.is_file_compressed = false;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
 
@@ -745,7 +735,7 @@ class BitsetWriter {
         program.files->write_char(byte3);
 
         // Write each flushed byte.
-        if (compressed) {
+        if (header.get_is_compressed()) {
             if (VERBOSE) {
                 std::cout << "Compressed" << std::endl;
             }

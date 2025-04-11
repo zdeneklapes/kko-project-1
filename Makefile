@@ -113,6 +113,7 @@ endif
 
 #ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/kko.proj.data/shp2.raw -o tests/out/shp2.raw -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/shp2.raw -o tests/in/kko.proj.data/shp2.raw-decompressed.txt -d
+#DIFF_ARGS=tests/in/kko.proj.data/shp2.raw tests/in/kko.proj.data/shp2.raw-decompressed.txt
 
 #-------------------------------------------------------------------------------
 # Adaptive compressor
@@ -155,12 +156,12 @@ endif
 #ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/kko.proj.data/cb.raw-decompressed.txt -d
 #DIFF_ARGS=tests/in/kko.proj.data/cb.raw tests/in/kko.proj.data/cb.raw-decompressed.txt
+#DU_ARGS=tests/in/kko.proj.data/cb.raw tests/out/cb.raw
 
-#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/nk01.raw -o tests/out/nk01.raw -w 512 -c -a
-#ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
-#DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
-
-
+ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/nk01.raw -o tests/out/nk01.raw -w 512 -c -a
+ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
+DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
+DU_ARGS=tests/in/kko.proj.data/nk01.raw tests/out/nk01.raw
 
 # --------------------------------------------------------
 # Targets
@@ -217,6 +218,7 @@ run-static: $(EXECUTABLE)
 	$(MAKE) run-compressor-static
 	$(MAKE) run-decompressor
 	diff $(DIFF_ARGS)
+	du --bytes $(DU_ARGS)
 
 run-compressor-static: $(EXECUTABLE)
 	./$(EXECUTABLE) $(ARGUMENTS_COMPRESSOR_STATIC)
@@ -226,6 +228,7 @@ run-adaptive:
 	$(MAKE) run-compressor-adaptive
 	$(MAKE) run-decompressor
 	diff $(DIFF_ARGS)
+	du --bytes $(DU_ARGS)
 
 run-compressor-adaptive: $(EXECUTABLE)
 	./$(EXECUTABLE) $(ARGUMENTS_COMPRESSOR_ADAPTIVE)
