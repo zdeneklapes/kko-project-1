@@ -26,10 +26,10 @@
 //------------------------------------------------------------------------------
 // Constants
 //------------------------------------------------------------------------------
-static const std::size_t FLAG_SIZE_BITS = 1; // LZSS typical
+static const std::size_t FLAG_SIZE_BITS = 1;
 
-static const std::size_t OFFSET_SIZE_BITS = 13; // LZSS typical
-static const std::size_t LENGTH_SIZE_BITS = 5;
+static const std::size_t OFFSET_SIZE_BITS = 3;
+static const std::size_t LENGTH_SIZE_BITS = 3;
 // static const std::size_t LENGTH_SIZE_BITS = 6; // TODO
 
 // static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS);
@@ -42,8 +42,8 @@ static const std::size_t CHARACTER_SIZE_BITS = 8;
 
 // static const int BLOCK_W = 16;
 // static const int BLOCK_H = 16;
-static const int BLOCK_W = 16;
-static const int BLOCK_H = 16;
+static const int BLOCK_W = 2;
+static const int BLOCK_H = 2;
 
 //------------------------------------------------------------------------------
 // Macros
@@ -206,16 +206,20 @@ class Program {
     }
 
     void print_arguments() {
-        DEBUG_PRINT_LITE("Program arguments:%c", '\n');
-        DEBUG_PRINT_LITE("-c | compress: %d%c", args->get<bool>("-c"), '\n');
-        DEBUG_PRINT_LITE("-d | pre_decompress: %d%c", args->get<bool>("-d"), '\n');
-        DEBUG_PRINT_LITE("-m | model: %d%c", args->get<bool>("-m"), '\n');
-        DEBUG_PRINT_LITE("-a | adaptive scanning: %d%c", args->get<bool>("-a"), '\n');
-        DEBUG_PRINT_LITE("-i | input file: %s%c", args->get<std::string>("-i").c_str(), '\n');
-        DEBUG_PRINT_LITE("-o | output file: %s%c", args->get<std::string>("-o").c_str(), '\n');
-        DEBUG_PRINT_LITE("-w | width: %d%c", args->get<int>("-w"), '\n');
-        DEBUG_PRINT_LITE("-v | verbose: %d%c", args->get<bool>("-v"), '\n');
+        if (this->is_verbose()) {
+            std::cout << "Program arguments:" << std::endl;
+            std::cout << "-c | compress: " << args->get<bool>("-c") << std::endl;
+            std::cout << "-d | pre_decompress: " << args->get<bool>("-d") << std::endl;
+            std::cout << "-m | model: " << args->get<bool>("-m") << std::endl;
+            std::cout << "-a | adaptive scanning: " << args->get<bool>("-a") << std::endl;
+            std::cout << "-i | input file: " << args->get<std::string>("-i") << std::endl;
+            std::cout << "-o | output file: " << args->get<std::string>("-o") << std::endl;
+            std::cout << "-w | width: " << args->get<int>("-w") << std::endl;
+            std::cout << "-v | verbose: " << args->get<bool>("-v") << std::endl;
+        }
     }
+
+    bool is_verbose() { return args->get<bool>("-v"); }
 };
 
 /**
@@ -229,7 +233,9 @@ struct Buffer {
     std::size_t max_lookahead_size = (1 << LENGTH_SIZE_BITS);
 
     Buffer() {
-        DEBUG_PRINT_LITE("max_window_size: %zu | max_lookahead_size: %zu\n", max_window_size, max_lookahead_size);
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("max_window_size: %zu | max_lookahead_size: %zu\n", max_window_size, max_lookahead_size);
+        }
         // NOTE: We do nto need to resize buffers
         //        window.resize(max_window_size);
         //        lookahead.resize(max_lookahead_size);
@@ -254,10 +260,11 @@ struct Buffer {
     lz_match brute_force_search() {
         lz_match match = {false, 0, 0};
 
-        /// DEBUG
+        //        if (DEBUG) {
         //        DEBUG_PRINT_LITE("Brute force search BEFORE%c", '\n');
         //        this->debug_print_window();
         //        this->debug_print_lookahead();
+        //        }
 
         // Iterate over each possible starting position in the window.
         for (std::size_t i = 0; i < window.size(); i++) {
@@ -286,10 +293,11 @@ struct Buffer {
             match.found = false;
         }
 
-        /// DEBUG
+        //        if (DEBUG) {
         //        DEBUG_PRINT_LITE("Brute force search AFTER%c", '\n');
         //        this->debug_print_window();
         //        this->debug_print_lookahead();
+        //        }
 
         return match;
     }
@@ -342,8 +350,6 @@ class File {
             this->EOF_reached = true;
         }
 
-        //        DEBUG_PRINT_LITE("Buffer size: %zu | buffer: %s\n", buffer_size, buffer);
-
         // Print each byte in its bit representation.
         if (DEBUG) {
             std::cout << "Buffer bytes in bits (buffer size: " << buffer_size << "):" << std::endl;
@@ -374,75 +380,43 @@ class File {
     }
 
     void prepare_adaptive_blocks(int image_width) {
-        int height = buffer_size / image_width;
-        int blocks_per_row = image_width / BLOCK_W;
-        int blocks_per_col = height / BLOCK_H;
+        const int block_size = BLOCK_W * BLOCK_H;
 
-        DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | height: %d | blocks per row: %d | blocks per "
-                         "col: %d | buffer_size: %zu\n",
-                         image_width, height, blocks_per_row, blocks_per_col, buffer_size);
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | buffer_size: %zu\n", image_width,
+                             buffer_size);
+        }
 
         adaptive_blocks.clear();
+        std::vector<uint8_t> block;
 
-        //        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-        //            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-        //                std::vector<char> block;
-        //                for (int y = 0; y < BLOCK_H; ++y) {
-        //                    int img_y = block_y * BLOCK_H + y;
-        //                    if (img_y >= height)
-        //                        break;
-        //                    for (int x = 0; x < BLOCK_W; ++x) {
-        //                        int img_x = block_x * BLOCK_W + x;
-        //                        if (img_x >= image_width)
-        //                            break;
-        //                        std::size_t index = img_y * image_width + img_x;
-        //                        block.push_back(buffer[index]);
-        //                    }
-        //                }
-        //
-        //                if (read_vertically) {
-        //                    block = transpose_block(block);
-        //                }
-        //
-        //                adaptive_blocks.push_back(block);
-        //            }
-        //        }
-        std::size_t index = 0;
-        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-                std::vector<char> block;
-                for (int y = 0; y < BLOCK_H; ++y) {
-                    int img_y = block_y * BLOCK_H + y;
-                    if (img_y >= height)
-                        break;
-                    for (int x = 0; x < BLOCK_W; ++x) {
-                        int img_x = block_x * BLOCK_W + x;
-                        if (img_x >= image_width)
-                            break;
-                        index = img_y * image_width + img_x;
-                        if (index < buffer_size) {
-                            block.push_back(buffer[index]);
-                        }
-                    }
-                }
+        for (std::size_t i = 0; i < buffer_size; ++i) {
+            block.push_back(buffer[i]);
 
+            // If block is full, optionally transpose and store
+            if (block.size() == block_size) {
                 if (read_vertically) {
                     block = transpose_block(block);
                 }
-
                 adaptive_blocks.push_back(block);
+                block.clear();
             }
         }
 
-        // TODO: Fill in the rest of the blocks f the index do not reach end of the buffer
+        // Handle last incomplete block (if any)
+        if (!block.empty()) {
+            if (read_vertically) {
+                block = transpose_block(block);
+            }
+            adaptive_blocks.push_back(block);
+        }
 
-        /// DEBUG - print blocks
         if (DEBUG) {
-            DEBUG_PRINT_LITE("Adaptive blocks (size: %zu):\n", adaptive_blocks.size());
+            DEBUG_PRINT_LITE("Adaptive blocks (count: %zu):\n", adaptive_blocks.size());
             for (std::size_t i = 0; i < adaptive_blocks.size(); ++i) {
-                std::cout << "Block " << i << ":" << std::endl;
-                for (std::size_t j = 0; j < adaptive_blocks[i].size(); ++j) {
-                    std::cout << adaptive_blocks[i][j];
+                std::cout << "Block " << i << " (size: " << adaptive_blocks[i].size() << "): ";
+                for (char c : adaptive_blocks[i]) {
+                    std::cout << c;
                 }
                 std::cout << std::endl;
             }
@@ -450,62 +424,41 @@ class File {
     }
 
     void prepare_adaptive_blocks_use_written_data(int image_width) {
-        // Fill adaptive_blocks from written_data
-        int height = written_data.size() / image_width;
-        int blocks_per_row = image_width / BLOCK_W;
-        int blocks_per_col = height / BLOCK_H;
+        const int block_size = BLOCK_W * BLOCK_H;
 
-        DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | height: %d | blocks per row: %d | blocks per "
-                         "col: %d | buffer_size: %zu\n",
-                         image_width, written_data.size() / image_width, blocks_per_row, blocks_per_col,
-                         written_data.size());
+        DEBUG_PRINT_LITE("Preparing adaptive blocks from written data - image width: %d | total bytes: %zu\n",
+                         image_width, written_data.size());
 
-        //        std::vector<std::vector<char>> blocks;
+        adaptive_blocks.clear();
+        std::vector<uint8_t> block;
 
-        //        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-        //            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-        //                std::vector<char> block;
-        //                for (int y = 0; y < BLOCK_H; ++y) {
-        //                    int img_y = block_y * BLOCK_H + y;
-        //                    if (img_y >= height)
-        //                        break;
-        //                    for (int x = 0; x < BLOCK_W; ++x) {
-        //                        int img_x = block_x * BLOCK_W + x;
-        //                        if (img_x >= image_width)
-        //                            break;
-        //                        std::size_t index = img_y * image_width + img_x;
-        //                        block.push_back(written_data[index]);
-        //                    }
-        //                }
-        //                adaptive_blocks.push_back(block);
-        //            }
-        //        }
-        for (int block_y = 0; block_y < blocks_per_col; ++block_y) {
-            for (int block_x = 0; block_x < blocks_per_row; ++block_x) {
-                std::vector<char> block;
-                for (int y = 0; y < BLOCK_H; ++y) {
-                    int img_y = block_y * BLOCK_H + y;
-                    if (img_y >= height)
-                        break;
-                    for (int x = 0; x < BLOCK_W; ++x) {
-                        int img_x = block_x * BLOCK_W + x;
-                        if (img_x >= image_width)
-                            break;
-                        std::size_t index = img_y * image_width + img_x;
-                        if (index < written_data.size()) {
-                            block.push_back(written_data[index]);
-                        }
-                    }
+        for (std::size_t i = 0; i < written_data.size(); ++i) {
+            block.push_back(written_data[i]);
+
+            if (block.size() == block_size) {
+                if (read_vertically) {
+                    block = transpose_block(block);
                 }
                 adaptive_blocks.push_back(block);
+                block.clear();
             }
         }
 
-        DEBUG_PRINT_LITE("Size of adaptive_blocks: %zu\n", adaptive_blocks.size());
+        // Push final partial block if any
+        if (!block.empty()) {
+            if (read_vertically) {
+                block = transpose_block(block);
+            }
+            adaptive_blocks.push_back(block);
+        }
+
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Adaptive blocks prepared: %zu blocks\n", adaptive_blocks.size());
+        }
     }
 
-    std::vector<char> transpose_block(const std::vector<char> &block) {
-        std::vector<char> result(BLOCK_H * BLOCK_W, 0);
+    std::vector<uint8_t> transpose_block(const std::vector<uint8_t> &block) {
+        std::vector<uint8_t> result(BLOCK_H * BLOCK_W, 0);
         for (int y = 0; y < BLOCK_H; ++y) {
             for (int x = 0; x < BLOCK_W; ++x) {
                 result[x * BLOCK_H + y] = block[y * BLOCK_W + x];
@@ -538,19 +491,22 @@ class File {
             prepare_adaptive_blocks(image_width);
         }
 
-        if (current_block_index >= adaptive_blocks.size()) {
-            EOF_reached = true;
-            return 0;
-        }
-
-        std::vector<char> &block = adaptive_blocks[current_block_index];
+        std::vector<uint8_t> &block = adaptive_blocks[current_block_index];
         if (current_block_pos >= block.size()) {
             current_block_index++;
             current_block_pos = 0;
-            return get_char_adaptive(); // recurse into next block
         }
 
-        return block[current_block_pos++];
+        bool is_last_block = current_block_index + 1 >= adaptive_blocks.size();
+        block = adaptive_blocks[current_block_index];
+        bool is_over_block_size = current_block_pos + 1 >= block.size();
+        const bool is_EOF_reached = is_last_block && is_over_block_size;
+        if (is_EOF_reached) {
+            EOF_reached = true;
+        }
+        const char _char = block[current_block_pos];
+        current_block_pos++;
+        return _char;
     }
 
     char get_char_sequential() {
@@ -644,6 +600,27 @@ class File {
 
         out.flush(); // ensure all data is written
     }
+    void is_image_format_ok() {
+        const int width = program.args->get<int>("-w");
+
+        if (width <= 0) {
+            throw "Invalid image width";
+        }
+
+        if (width % BLOCK_W != 0) {
+            throw "Image width is not divisible by block width";
+        }
+
+        int height = static_cast<int>(buffer_size / width);
+
+        if ((buffer_size % width) != 0) {
+            throw "Image buffer size is not divisible by image width";
+        }
+
+        if (height % BLOCK_H != 0) {
+            throw "Image height is not divisible by block height";
+        }
+    }
 
     // Retrieve input/output filenames from Program
     //    std::ifstream in;
@@ -652,13 +629,10 @@ class File {
     std::ofstream out;
     uint8_t current_char = '\0';
     bool EOF_reached = false; // track if we hit EOF
-#if DEBUG
-    std::size_t current_pos = 0;
-#endif
     char *buffer = nullptr;
     std::size_t buffer_size;
     std::vector<BlockHeader> block_headers;
-    std::vector<std::vector<char>> adaptive_blocks; // blocks stored row-wise
+    std::vector<std::vector<uint8_t>> adaptive_blocks; // blocks stored row-wise
     unsigned long long int buffer_head = 0;
     unsigned long long int current_block_index = 0;
     unsigned long long int current_block_pos = 0;
@@ -702,9 +676,9 @@ class BitsetWriter {
         this->flush(); // Add padding bits
 
         bool compressed = true;
-        if (program.files->buffer_size < flushed_bytes.size()) {
-            compressed = false;
-        }
+        //        if (program.files->buffer_size < flushed_bytes.size()) {
+        //            compressed = false;
+        //        }
 
         // Create and populate the header.
         CompressionHeader header;
@@ -740,7 +714,9 @@ class BitsetWriter {
 
         // Write each flushed byte.
         if (compressed) {
-            DEBUG_PRINT_LITE("COMPRESSED%c", '\n');
+            if (DEBUG) {
+                std::cout << "COMPRESSED%c", '\n';
+            }
             for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
                 if (DEBUG) {
                     std::cout << "flushed_bytes[" << i << "]: " << std::bitset<8>(flushed_bytes[i]) << std::endl;
@@ -748,10 +724,13 @@ class BitsetWriter {
                 program.files->write_char(flushed_bytes[i]);
             }
         } else {
-            DEBUG_PRINT_LITE("NOT COMPRESSED%c", '\n');
+            if (DEBUG) {
+                std::cout << "NOT COMPRESSED%c", '\n';
+            }
             for (std::size_t i = 0; i < program.files->buffer_size; i++) {
                 if (DEBUG) {
-                    std::cout << "program.files->buffer[" << i << "]: " << std::bitset<8>(program.files->buffer[i]) << std::endl;
+                    std::cout << "program.files->buffer[" << i << "]: " << std::bitset<8>(program.files->buffer[i])
+                              << std::endl;
                 }
                 const auto _char = static_cast<char>(program.files->buffer[i]);
                 program.files->write_char(_char);
@@ -864,10 +843,11 @@ void shift_buffers_and_read_new_char(Program &program) {
     auto *buffers = program.buffers;
     auto *files = program.files;
 
-    /// DEBUG
-    //    DEBUG_PRINT_LITE("Updating buffers BEFORE%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
+    //    if (DEBUG) {
+    //        DEBUG_PRINT_LITE("Updating buffers BEFORE%c", '\n');
+    //        buffers->debug_print_window();
+    //        buffers->debug_print_lookahead();
+    //    }
 
     char char_to_add = buffers->lookahead.front();
     buffers->lookahead.pop_front();
@@ -881,11 +861,12 @@ void shift_buffers_and_read_new_char(Program &program) {
         buffers->lookahead.push_back(_char);
     }
 
-    /// DEBUG
-    //    DEBUG_PRINT_LITE("Updating buffers AFTER%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
-    //    DEBUG_PRINT_LITE("------------------%c", '\n');
+    //    if (DEBUG) {
+    //        DEBUG_PRINT_LITE("Updating buffers AFTER%c", '\n');
+    //        buffers->debug_print_window();
+    //        buffers->debug_print_lookahead();
+    //        DEBUG_PRINT_LITE("------------------%c", '\n');
+    //    }
 }
 
 void compress_compressed(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
@@ -902,12 +883,11 @@ void compress_compressed(Program &program, lz_match &match, BitsetWriter &bitset
 void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
     Buffer *buffers = program.buffers;
 
-    //    DEBUG_PRINT("Start%c", '\n');
-
-    /// DEBUG
-    //    DEBUG_PRINT_LITE("Updating buffers literal BEFORE%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
+    //    if (DEBUG) {
+    //            DEBUG_PRINT_LITE("Updating buffers literal BEFORE%c", '\n');
+    //            buffers->debug_print_window();
+    //            buffers->debug_print_lookahead();
+    //    }
 
     bitset_writer.write_bits(0, FLAG_SIZE_BITS);
 
@@ -915,31 +895,35 @@ void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_wr
     char char1 = buffers->lookahead.front();
     shift_buffers_and_read_new_char(program);
     bitset_writer.write_bits(char1, CHARACTER_SIZE_BITS);
-    //    DEBUG_PRINT_LITE("char1: %c | char1_bits: %s\n", char1, std::bitset<8>(static_cast<unsigned
+    //    if (DEBUG) {
+    //            DEBUG_PRINT_LITE("char1: %c | char1_bits: %s\n", char1,
+    //            std::bitset<8>(static_cast<uint8_t>(char1)).to_string().c_str());
+    //    }
     //    char>(char1)).to_string().c_str());
 
-    if (buffers->lookahead.empty()) {
-        DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Lookahead is empty!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
-        return;
-    }
+    //    if (buffers->lookahead.empty()) {
+    //        DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Lookahead is empty!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
+    //        return;
+    //    }
 
     char char2 = buffers->lookahead.front();
     shift_buffers_and_read_new_char(program);
     bitset_writer.write_bits(char2, CHARACTER_SIZE_BITS);
-    //    DEBUG_PRINT_LITE("char2: %c | char2_bits: %s\n", char2, std::bitset<8>(static_cast<unsigned
+    //    if (DEBUG) {
+    //            DEBUG_PRINT_LITE("char2: %c | char2_bits: %s\n", char2,
+    //            std::bitset<8>(static_cast<uint8_t>(char2)).to_string().c_str());
+    //    }
     //    char>(char2)).to_string().c_str());
 
-    /// DEBUG
-    //    DEBUG_PRINT_LITE("Updating buffers literal AFTER%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
+    // if (DEBUG) {
+    //         DEBUG_PRINT_LITE("Updating buffers literal AFTER%c", '\n');
+    //         buffers->debug_print_window();
+    //         buffers->debug_print_lookahead();
+    //     }
 }
 
 void init_lookahead_buffer(Program &program) {
-    //    DEBUG_PRINT("%c", '\n');
     Buffer *buffers = program.buffers;
-
-    //    DEBUG_PRINT_LITE("Lookahead size: %zu%c", buffers->lookahead.size(), '\n');
 
     for (std::size_t i = 0; i < buffers->max_lookahead_size && !program.files->EOF_reached; i++) {
         char char_to_add = program.files->get_char();
@@ -948,11 +932,13 @@ void init_lookahead_buffer(Program &program) {
     }
 
     //    const auto lookahead_string = std::string(buffers->lookahead.begin(), buffers->lookahead.end());
-    /// DEBUG
+
+    //    if (DEBUG) {
     //    DEBUG_PRINT_LITE("After initialization%c", '\n');
     //    buffers->debug_print_window();
     //    buffers->debug_print_lookahead();
     //    DEBUG_PRINT_LITE("------------------%c", '\n');
+    //    }
 }
 
 void compress(Program &program) {
@@ -967,13 +953,11 @@ void compress(Program &program) {
         tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("Before process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
-        //        match.offset,
-        //                         match.length);
+        //        if (DEBUG) {
+        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
+        //            buffers->debug_print_window();
+        //            buffers->debug_print_lookahead();
+        //        }
 
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, bitset_writer);
@@ -981,12 +965,13 @@ void compress(Program &program) {
             StaticProcessor::compress_literal(program, match, bitset_writer);
         }
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("After process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found,
-                         match.offset, match.length, tmp_i);
+        //        if (DEBUG) {
+        //            DEBUG_PRINT_LITE("After process match%c", '\n');
+        //            buffers->debug_print_window();
+        //            buffers->debug_print_lookahead();
+        //            DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n",
+        //                             match.found, match.offset, match.length, tmp_i);
+        //        }
     }
 
     // Process end
@@ -1031,7 +1016,6 @@ void decompress_compressed(Program &program, BitsetReader &bitset_reader, std::s
 }
 
 char decompress_character(Program &program, BitsetReader &bitset_reader) {
-    //    DEBUG_PRINT("Start%c", '\n');
     Buffer *buffers = program.buffers;
 
     // Get first char
@@ -1053,7 +1037,9 @@ char decompress_character(Program &program, BitsetReader &bitset_reader) {
 
 // --- Changed code in decompress ---
 void decompress(Program &program, CompressionHeader &header) {
-    DEBUG_PRINT_LITE("Decompress static%c", '\n');
+    if (DEBUG) {
+        DEBUG_PRINT_LITE("Decompress static%c", '\n');
+    }
     BitsetReader bitset_reader(program, header);
     Buffer *buffers = program.buffers;
     buffers->window.clear();
@@ -1066,7 +1052,9 @@ void decompress(Program &program, CompressionHeader &header) {
 
         // If no flag could be read, exit the loop.
         if (bitset_reader.is_at_the_end_of_file()) {
-            DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
+            if (DEBUG) {
+                DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
+            }
             break;
         }
 
@@ -1085,12 +1073,15 @@ void decompress(Program &program, CompressionHeader &header) {
 
             decompress_compressed(program, bitset_reader, offset, length);
         } else { // Literal token.
-            DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
+                 //            if (DEBUG) {
+                 //            DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
+                 //            }
             char char1 = decompress_character(program, bitset_reader);
             const bool should_stop = bitset_reader.is_at_the_end_of_file();
-            //            DEBUG_PRINT_LITE("should_stop: %d\n", should_stop);
             if (should_stop) {
-                DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end INNER%c", '\n');
+                if (DEBUG) {
+                    DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end INNER%c", '\n');
+                }
                 bitset_reader.is_at_the_end_of_file();
                 break;
             }
@@ -1103,100 +1094,124 @@ void decompress(Program &program, CompressionHeader &header) {
 }; // namespace StaticProcessor
 
 namespace AdaptiveProcessor {
-void compress(Program &program) {
-    Buffer *buffers = program.buffers;
-    auto *file = program.files;
-    BitsetWriter bitset_writer_horizontal(program);
-    BitsetWriter bitset_writer_vertical(program);
 
-    DEBUG_PRINT_LITE("==========================================================\ncompression horizontal %c", '\n');
-    // Compress horizontally
-    StaticProcessor::init_lookahead_buffer(program);
+BitsetWriter compress_horizontal(Program &program) {
+    auto *buffers = program.buffers;
+    auto *file = program.files;
+    BitsetWriter writer(program);
+
     if (DEBUG) {
-        /// DEBUG
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
+        DEBUG_PRINT_LITE("==========================================================\ncompression horizontal %c", '\n');
     }
 
-    int tmp_i = 0;
-    while (!program.buffers->lookahead.empty()) {
-        tmp_i++;
+    file->seek_to_beginning_of_file();
+    file->read_vertically = false;
+    buffers->lookahead.clear();
+    buffers->window.clear();
+    StaticProcessor::init_lookahead_buffer(program);
+
+    StaticProcessor::init_lookahead_buffer(program);
+    //    if (DEBUG) {
+    //        buffers->debug_print_window();
+    //        buffers->debug_print_lookahead();
+    //    }
+
+    while (!buffers->lookahead.empty()) {
         lz_match match = buffers->brute_force_search();
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("Before process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
-        //        match.offset,
-        //                         match.length);
+        //        if (DEBUG) {
+        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
+        //            buffers->debug_print_window();
+        //            buffers->debug_print_lookahead();
+        //        }
 
         if (match.found) {
-            StaticProcessor::compress_compressed(program, match, bitset_writer_horizontal);
+            StaticProcessor::compress_compressed(program, match, writer);
         } else {
-            StaticProcessor::compress_literal(program, match, bitset_writer_horizontal);
+            StaticProcessor::compress_literal(program, match, writer);
         }
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("After process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found,
-                         match.offset, match.length, tmp_i);
+        //        if (DEBUG) {
+        //        DEBUG_PRINT_LITE("After process match%c", '\n');
+        //        buffers->debug_print_window();
+        //        buffers->debug_print_lookahead();
+        //        }
     }
 
-    // Compress vertically
-    DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c", '\n');
+    return writer;
+}
+
+BitsetWriter compress_vertical(Program &program) {
+    auto *buffers = program.buffers;
+    auto *file = program.files;
+    BitsetWriter writer(program);
+
+    //    if (DEBUG) {
+    //        DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c",
+    //        '\n');
+    //    }
+
     file->seek_to_beginning_of_file();
     file->read_vertically = true;
     buffers->lookahead.clear();
     buffers->window.clear();
     StaticProcessor::init_lookahead_buffer(program);
-    tmp_i = 0;
-    while (!program.buffers->lookahead.empty()) {
-        tmp_i++;
+
+    while (!buffers->lookahead.empty()) {
         lz_match match = buffers->brute_force_search();
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("Before process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        //        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu\n---------------\n", match.found,
-        //        match.offset,
-        //                         match.length);
+        //        if (DEBUG) {
+        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
+        //            buffers->debug_print_window();
+        //            buffers->debug_print_lookahead();
+        //        }
 
         if (match.found) {
-            StaticProcessor::compress_compressed(program, match, bitset_writer_vertical);
+            StaticProcessor::compress_compressed(program, match, writer);
         } else {
-            StaticProcessor::compress_literal(program, match, bitset_writer_vertical);
+            StaticProcessor::compress_literal(program, match, writer);
         }
 
-        /// DEBUG
-        DEBUG_PRINT_LITE("After process match%c", '\n');
-        buffers->debug_print_window();
-        buffers->debug_print_lookahead();
-        DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n", match.found,
-                         match.offset, match.length, tmp_i);
+        //        if (DEBUG) {
+        //        DEBUG_PRINT_LITE("After process match%c", '\n');
+        //        buffers->debug_print_window();
+        //        buffers->debug_print_lookahead();
+        //        }
     }
 
-    if (bitset_writer_horizontal.get_flushed_bytes().size() <= bitset_writer_vertical.get_flushed_bytes().size()) {
-        DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
-        bitset_writer_horizontal.write_all_to_file();
+    return writer;
+}
+
+void compress(Program &program) {
+    BitsetWriter horizontal_writer = compress_horizontal(program);
+    BitsetWriter vertical_writer = compress_vertical(program);
+
+    if (horizontal_writer.get_flushed_bytes().size() <= vertical_writer.get_flushed_bytes().size()) {
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
+        }
+        horizontal_writer.write_all_to_file(false);
     } else {
-        DEBUG_PRINT_LITE("Writing vertical%c", '\n');
-        bitset_writer_vertical.write_all_to_file(true);
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Writing vertical%c", '\n');
+        }
+        vertical_writer.write_all_to_file(true);
     }
 }
 
 void decompress(Program &program, CompressionHeader &header) {
-    DEBUG_PRINT_LITE("Decompress adaptive%c", '\n');
+    //    if (DEBUG) {
+    //        DEBUG_PRINT_LITE("Decompress adaptive%c", '\n');
+    //    }
 
     BitsetReader bitset_reader(program, header);
     auto *file = program.files;
     auto *buffers = program.buffers;
     buffers->window.clear();
 
-    DEBUG_PRINT_LITE("Decompress static%c", '\n');
+    //    if (DEBUG) {
+    //        DEBUG_PRINT_LITE("Decompress static%c", '\n');
+    //    }
 
     // Continue while there are still bytes or unread bit
     std::size_t tmp_i = 0;
@@ -1206,7 +1221,9 @@ void decompress(Program &program, CompressionHeader &header) {
 
         // If no flag could be read, exit the loop.
         if (bitset_reader.is_at_the_end_of_file()) {
-            DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
+            //            if (DEBUG) {
+            //            DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
+            //            }
             break;
         }
 
@@ -1239,9 +1256,13 @@ void decompress(Program &program, CompressionHeader &header) {
     }
 
     file->adaptive_blocks.clear();
-    DEBUG_PRINT_LITE("Width: %d | Height: %d\n", header.width);
+    if (DEBUG) {
+        DEBUG_PRINT_LITE("Width: %d | Height: %d\n", header.width);
+    }
     file->prepare_adaptive_blocks_use_written_data(header.width);
-    DEBUG_PRINT_LITE("written_data size: %zu\n", file->written_data.size());
+    if (DEBUG) {
+        DEBUG_PRINT_LITE("written_data size: %zu\n", file->written_data.size());
+    }
 
     // Clear written_data before restoring to correct order
     //    file->written_data.clear();
@@ -1324,6 +1345,11 @@ Program *init_program(int argc, char **argv) {
     program->files = file;
     auto buffers = new Buffer();
     program->buffers = buffers;
+
+    if (program->is_adaptive_compress()) {
+        file->is_image_format_ok();
+    }
+
     return program;
 }
 

@@ -4,6 +4,7 @@
 build/
 tmp/
 third_party/
+tests/out/
 
 
 *.log
