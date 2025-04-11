@@ -243,6 +243,14 @@ struct Buffer {
 
     ~Buffer() {}
 
+    void debug_print_buffers(const std::string &msg) {
+        if (DEBUG) {
+            std::cout << "----------------" << std::endl << msg << std::endl;
+            this->debug_print_window();
+            this->debug_print_lookahead();
+        }
+    }
+
     void debug_print_window() {
         if (DEBUG) {
             std::string output(window.begin(), window.end());
@@ -272,9 +280,11 @@ struct Buffer {
             // Compare the window starting at 'i' with the lookahead buffer.
             // NOTE: here must be -1 in: lookahead.size()-1 (because when decompressing it overflow the 5 bits so max
             // match length is 31 chars nto whole 32 chars)
-            while (match_length < lookahead.size() - 1 && (i + match_length) < window.size() &&
-                   window[i + match_length] == lookahead[match_length]) {
+            bool can_continue = true;
+            while (can_continue) {
                 match_length++;
+                can_continue = match_length < lookahead.size() - 1 && (i + match_length) < window.size() &&
+                               window[i + match_length] == lookahead[match_length];
             }
             // Update best_match if a longer sequence is found.
             if (match_length > match.length) {
@@ -675,7 +685,7 @@ class BitsetWriter {
     void write_all_to_file(const bool is_vertical = false) {
         this->flush(); // Add padding bits
 
-        bool compressed = true;
+        bool compressed = DEBUG ? true : program.files->buffer_size < flushed_bytes.size();
         //        if (program.files->buffer_size < flushed_bytes.size()) {
         //            compressed = false;
         //        }
@@ -715,7 +725,7 @@ class BitsetWriter {
         // Write each flushed byte.
         if (compressed) {
             if (DEBUG) {
-                std::cout << "COMPRESSED%c", '\n';
+                std::cout << "Compressed" << std::endl;
             }
             for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
                 if (DEBUG) {
@@ -725,7 +735,7 @@ class BitsetWriter {
             }
         } else {
             if (DEBUG) {
-                std::cout << "NOT COMPRESSED%c", '\n';
+                std::cout << "Not compressed" << std::endl;
             }
             for (std::size_t i = 0; i < program.files->buffer_size; i++) {
                 if (DEBUG) {
@@ -759,10 +769,10 @@ class BitsetWriter {
         uint8_t byte = static_cast<uint8_t>(buffer.to_ulong());
         // Store the byte in our vector.
         flushed_bytes.push_back(byte);
-        if (DEBUG) {
-            std::cout << "Compressed bits: " << buffer << " | flushed char in bits: " << std::bitset<8>(byte)
-                      << " | flushed char in uint8_t: " << byte << std::endl;
-        }
+        //        if (DEBUG) {
+        //            std::cout << "Compressed bits: " << buffer << " | flushed char in bits: " << std::bitset<8>(byte)
+        //                      << " | flushed char in uint8_t: " << byte << std::endl;
+        //        }
         // Reset the buffer and the counter.
         bits_filled = 0;
         buffer.reset();
@@ -835,6 +845,20 @@ class BitsetReader {
     CompressionHeader &header;
 };
 
+
+void init_lookahead_buffer(Program &program) {
+    Buffer *buffers = program.buffers;
+
+    for (std::size_t i = 0; i < buffers->max_lookahead_size && !program.files->EOF_reached; i++) {
+        char char_to_add = program.files->get_char();
+        //        DEBUG_PRINT_LITE("Adding char to lookahead: %c%c", char_to_add, '\n');
+        buffers->lookahead.push_back(char_to_add); // TODO[fixme]: SIGSEGV
+    }
+
+    if (DEBUG) {
+        buffers->debug_print_buffers("After initialization");
+    }
+}
 //------------------------------------------------------------------------------
 // Functions
 //------------------------------------------------------------------------------
@@ -901,10 +925,12 @@ void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_wr
     //    }
     //    char>(char1)).to_string().c_str());
 
-    //    if (buffers->lookahead.empty()) {
-    //        DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Lookahead is empty!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
-    //        return;
-    //    }
+    if (buffers->lookahead.empty()) {
+        if (DEBUG) {
+            std::cout << "Finish lookahead is empty" << std::endl;
+        }
+        return;
+    }
 
     char char2 = buffers->lookahead.front();
     shift_buffers_and_read_new_char(program);
@@ -922,31 +948,12 @@ void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_wr
     //     }
 }
 
-void init_lookahead_buffer(Program &program) {
-    Buffer *buffers = program.buffers;
-
-    for (std::size_t i = 0; i < buffers->max_lookahead_size && !program.files->EOF_reached; i++) {
-        char char_to_add = program.files->get_char();
-        //        DEBUG_PRINT_LITE("Adding char to lookahead: %c%c", char_to_add, '\n');
-        buffers->lookahead.push_back(char_to_add); // TODO[fixme]: SIGSEGV
-    }
-
-    //    const auto lookahead_string = std::string(buffers->lookahead.begin(), buffers->lookahead.end());
-
-    //    if (DEBUG) {
-    //    DEBUG_PRINT_LITE("After initialization%c", '\n');
-    //    buffers->debug_print_window();
-    //    buffers->debug_print_lookahead();
-    //    DEBUG_PRINT_LITE("------------------%c", '\n');
-    //    }
-}
-
 void compress(Program &program) {
     //    DEBUG_PRINT("%c", '\n');
     Buffer *buffers = program.buffers;
     BitsetWriter bitset_writer(program);
 
-    StaticProcessor::init_lookahead_buffer(program);
+    init_lookahead_buffer(program);
 
     int tmp_i = 0;
     while (!program.buffers->lookahead.empty()) {
@@ -1108,22 +1115,21 @@ BitsetWriter compress_horizontal(Program &program) {
     file->read_vertically = false;
     buffers->lookahead.clear();
     buffers->window.clear();
-    StaticProcessor::init_lookahead_buffer(program);
+    init_lookahead_buffer(program);
 
-    StaticProcessor::init_lookahead_buffer(program);
     //    if (DEBUG) {
     //        buffers->debug_print_window();
     //        buffers->debug_print_lookahead();
     //    }
 
+    int tmp_i = 0;
     while (!buffers->lookahead.empty()) {
+        tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        //        if (DEBUG) {
-        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
-        //            buffers->debug_print_window();
-        //            buffers->debug_print_lookahead();
-        //        }
+        if (DEBUG) {
+            buffers->debug_print_buffers("Before process match | tmp_i: " + std::to_string(tmp_i));
+        }
 
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, writer);
@@ -1131,11 +1137,11 @@ BitsetWriter compress_horizontal(Program &program) {
             StaticProcessor::compress_literal(program, match, writer);
         }
 
-        //        if (DEBUG) {
-        //        DEBUG_PRINT_LITE("After process match%c", '\n');
-        //        buffers->debug_print_window();
-        //        buffers->debug_print_lookahead();
-        //        }
+        if (DEBUG) {
+            buffers->debug_print_buffers("After process match | tmp_i: " + std::to_string(tmp_i));
+            DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n", match.found, match.offset,
+                             match.length, tmp_i);
+        }
     }
 
     return writer;
@@ -1146,25 +1152,24 @@ BitsetWriter compress_vertical(Program &program) {
     auto *file = program.files;
     BitsetWriter writer(program);
 
-    //    if (DEBUG) {
-    //        DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c",
-    //        '\n');
-    //    }
+    if (DEBUG) {
+        DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c", '\n');
+    }
 
     file->seek_to_beginning_of_file();
     file->read_vertically = true;
     buffers->lookahead.clear();
     buffers->window.clear();
-    StaticProcessor::init_lookahead_buffer(program);
+    init_lookahead_buffer(program);
 
+    int tmp_i = 0;
     while (!buffers->lookahead.empty()) {
+        tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        //        if (DEBUG) {
-        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
-        //            buffers->debug_print_window();
-        //            buffers->debug_print_lookahead();
-        //        }
+        if (DEBUG) {
+            buffers->debug_print_buffers("Before process match | tmp_i: " + std::to_string(tmp_i));
+        }
 
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, writer);
@@ -1172,11 +1177,9 @@ BitsetWriter compress_vertical(Program &program) {
             StaticProcessor::compress_literal(program, match, writer);
         }
 
-        //        if (DEBUG) {
-        //        DEBUG_PRINT_LITE("After process match%c", '\n');
-        //        buffers->debug_print_window();
-        //        buffers->debug_print_lookahead();
-        //        }
+        if (DEBUG) {
+            buffers->debug_print_buffers("After process match | tmp_i: " + std::to_string(tmp_i));
+        }
     }
 
     return writer;
@@ -1184,19 +1187,20 @@ BitsetWriter compress_vertical(Program &program) {
 
 void compress(Program &program) {
     BitsetWriter horizontal_writer = compress_horizontal(program);
-    BitsetWriter vertical_writer = compress_vertical(program);
+    //    BitsetWriter vertical_writer = compress_vertical(program);
+    horizontal_writer.write_all_to_file(false);
 
-    if (horizontal_writer.get_flushed_bytes().size() <= vertical_writer.get_flushed_bytes().size()) {
-        if (DEBUG) {
-            DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
-        }
-        horizontal_writer.write_all_to_file(false);
-    } else {
-        if (DEBUG) {
-            DEBUG_PRINT_LITE("Writing vertical%c", '\n');
-        }
-        vertical_writer.write_all_to_file(true);
-    }
+    //    if (horizontal_writer.get_flushed_bytes().size() <= vertical_writer.get_flushed_bytes().size()) {
+    //        if (DEBUG) {
+    //            DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
+    //        }
+    //        horizontal_writer.write_all_to_file(false);
+    //    } else {
+    //        if (DEBUG) {
+    //            DEBUG_PRINT_LITE("Writing vertical%c", '\n');
+    //        }
+    //        vertical_writer.write_all_to_file(true);
+    //    }
 }
 
 void decompress(Program &program, CompressionHeader &header) {
@@ -1348,6 +1352,9 @@ Program *init_program(int argc, char **argv) {
 
     if (program->is_adaptive_compress()) {
         file->is_image_format_ok();
+        if (DEBUG) {
+            std::cout << "Image format is ok" << std::endl;
+        }
     }
 
     return program;

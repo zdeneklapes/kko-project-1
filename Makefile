@@ -138,7 +138,7 @@ endif
 TR_ARGS=-d '\n' < tests/in/adaptive/t19.txt > tests/in/adaptive/t19-a.txt
 ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/adaptive/t19-a.txt -o tests/out/t19-a.txt -w 4 -c -a
 ARGUMENTS_DECOMPRESSOR := -i tests/out/t19-a.txt -o tests/in/adaptive/t19-a-decompressed.txt -d
-DIFF_ARGS=tests/in/adaptive/t19-a-decompressed.txt tests/in/adaptive/t19-a.txt
+DIFF_ARGS=tests/in/adaptive/t19-a.txt tests/in/adaptive/t19-a-decompressed.txt
 
 #ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/adaptive/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/adaptive/kko.proj.data/cb.raw-decompressed.txt -d
