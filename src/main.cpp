@@ -3,10 +3,8 @@
 //
 
 // TODO
-// - Fix fread and usage of read_char and get_char
-// - Try compress some raw file
-// TODO:   static void compress_adaptive(const Program &program);
-// TODO:   static decompress(const Program &program);
+// - Fix adaptive
+// - Pre compression algo - maybe delta? or something else?
 
 //------------------------------------------------------------------------------
 // Includes
@@ -42,13 +40,24 @@ static const std::size_t CHARACTER_SIZE_BITS = 8;
 
 // static const int BLOCK_W = 16;
 // static const int BLOCK_H = 16;
-static const int BLOCK_W = 2;
-static const int BLOCK_H = 2;
+static const int BLOCK_W = 8;
+static const int BLOCK_H = 8;
+// static const int BLOCK_W = 4;
+// static const int BLOCK_H = 4;
+// static const int BLOCK_W = 2;
+// static const int BLOCK_H = 2;
 
 //------------------------------------------------------------------------------
 // Macros
 //------------------------------------------------------------------------------
-#define DEBUG (1)
+#define DEBUG (0)
+#define DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR (0)
+#define DEBUG_BRUTE_FORCE (0)
+#define DEBUG_BRUTE_FORCE_RESULT (0)
+#define DEBUG_READ_HEADER (0)
+#define DEBUG_WRITE_HEADER (0)
+#define INFO (1)
+#define VERBOSE (1)
 #define DEBUG_LITE (DEBUG)
 #define DEBUG_PRINT_LITE(fmt, ...)                                                                                     \
     do {                                                                                                               \
@@ -92,10 +101,10 @@ typedef struct token token_t;
 class CompressionHeader {
   public:
     unsigned padding_bits_count : 3;
-    unsigned mode : 1;          // static=0 vs. adaptive=1
-    unsigned passage : 1;       // used only for adaptive: 0-horizontal, 1-vertical
-    unsigned is_compressed : 1; // 0-not compressed, 1-compressed
-    unsigned width : 16;        // width of the image
+    unsigned mode : 1;               // static=0 vs. adaptive=1
+    unsigned passage : 1;            // used only for adaptive: 0-horizontal, 1-vertical
+    unsigned is_file_compressed : 1; // 0-not compressed, 1-compressed
+    unsigned width : 16;             // width of the image
 
     bool get_is_static() const { return mode == 0; }
     bool get_is_adaptive() const { return mode == 1; }
@@ -103,7 +112,7 @@ class CompressionHeader {
     bool get_is_horizontal() const { return passage == 0; }
     bool get_is_vertical() const { return passage == 1; }
 
-    bool get_is_compressed() const { return is_compressed == 1; }
+    bool get_is_compressed() const { return is_file_compressed == 1; }
 
     int get_width() const { return width; }
 };
@@ -166,15 +175,16 @@ class Program {
             .scan<'i', int>()
             .default_value(-1);
 
-        // Optional verbose flag
-        args->add_argument("-v", "--verbose")
-            .help("increase output verbosity")
-            .default_value(false)
-            .implicit_value(true);
-
         // Parse the command-line arguments.
         try {
             args->parse_args(argc, argv);
+            const auto output_file = args->get<std::string>("-o");
+            const auto output_dir = std::filesystem::path(output_file).parent_path();
+            // Check that output dir exists
+            if (!std::filesystem::exists(output_dir)) {
+                // Create output dir
+                std::filesystem::create_directories(output_dir);
+            }
         } catch (const std::runtime_error &err) {
             std::cerr << err.what() << std::endl;
             std::cerr << *args;
@@ -226,8 +236,8 @@ class Program {
  * Buffer
  */
 struct Buffer {
-    std::deque<char> window;
-    std::deque<char> lookahead;
+    std::deque<uint8_t> window;
+    std::deque<uint8_t> lookahead;
 
     std::size_t max_window_size = (1 << OFFSET_SIZE_BITS);
     std::size_t max_lookahead_size = (1 << LENGTH_SIZE_BITS);
@@ -244,35 +254,31 @@ struct Buffer {
     ~Buffer() {}
 
     void debug_print_buffers(const std::string &msg) {
-        if (DEBUG) {
-            std::cout << "----------------" << std::endl << msg << std::endl;
-            this->debug_print_window();
-            this->debug_print_lookahead();
-        }
+        std::cout << "----------------" << std::endl << msg << std::endl;
+        this->debug_print_window();
+        this->debug_print_lookahead();
     }
 
     void debug_print_window() {
-        if (DEBUG) {
-            std::string output(window.begin(), window.end());
-            std::cout << "Window (size: " << window.size() << "):\n" << output << std::endl;
-        }
+        std::string output(window.begin(), window.end());
+        std::cout << "Window (size: " << window.size() << "):\n" << output << std::endl;
     }
 
     void debug_print_lookahead() {
-        if (DEBUG) {
-            std::string output(lookahead.begin(), lookahead.end());
-            std::cout << "Lookahead (size: " << lookahead.size() << "):\n" << output << std::endl;
-        }
+        std::string output(lookahead.begin(), lookahead.end());
+        std::cout << "Lookahead (size: " << lookahead.size() << "):\n" << output << std::endl;
     }
 
     lz_match brute_force_search() {
         lz_match match = {false, 0, 0};
 
-        //        if (DEBUG) {
-        //        DEBUG_PRINT_LITE("Brute force search BEFORE%c", '\n');
-        //        this->debug_print_window();
-        //        this->debug_print_lookahead();
-        //        }
+        if (VERBOSE && DEBUG_BRUTE_FORCE) {
+            std::cout << "Brute force" << std::endl;
+        }
+
+        if (DEBUG_BRUTE_FORCE) {
+            debug_print_buffers("Buffers: ");
+        }
 
         // Iterate over each possible starting position in the window.
         for (std::size_t i = 0; i < window.size(); i++) {
@@ -280,8 +286,14 @@ struct Buffer {
             // Compare the window starting at 'i' with the lookahead buffer.
             // NOTE: here must be -1 in: lookahead.size()-1 (because when decompressing it overflow the 5 bits so max
             // match length is 31 chars nto whole 32 chars)
-            bool can_continue = true;
+            bool can_continue = match_length < lookahead.size() - 1 && (i + match_length) < window.size() &&
+                                window[i + match_length] == lookahead[match_length];
             while (can_continue) {
+                if (DEBUG_BRUTE_FORCE) {
+                    std::cout << "|match_length: " << match_length << " | i: " << i
+                              << " | window[i+match_length]: " << window[i + match_length]
+                              << " | lookahead[match_length]: " << lookahead[match_length] << "|\n";
+                }
                 match_length++;
                 can_continue = match_length < lookahead.size() - 1 && (i + match_length) < window.size() &&
                                window[i + match_length] == lookahead[match_length];
@@ -303,12 +315,10 @@ struct Buffer {
             match.found = false;
         }
 
-        //        if (DEBUG) {
-        //        DEBUG_PRINT_LITE("Brute force search AFTER%c", '\n');
-        //        this->debug_print_window();
-        //        this->debug_print_lookahead();
-        //        }
-
+        if (DEBUG_BRUTE_FORCE_RESULT) {
+            std::cout << "|is_compressed: " << match.found << " | offset: " << match.offset
+                      << " | length: " << match.length << "|" << std::endl;
+        }
         return match;
     }
 };
@@ -614,21 +624,22 @@ class File {
         const int width = program.args->get<int>("-w");
 
         if (width <= 0) {
-            throw "Invalid image width";
+            throw std::runtime_error("Invalid image width");
         }
 
         if (width % BLOCK_W != 0) {
-            throw "Image width is not divisible by block width";
+            throw std::runtime_error("Image width is not divisible by block width");
         }
 
         int height = static_cast<int>(buffer_size / width);
 
         if ((buffer_size % width) != 0) {
-            throw "Image buffer size is not divisible by image width";
+            throw std::runtime_error("Image buffer size: " + std::to_string(buffer_size) +
+                                     " is not divisible by image width: " + std::to_string(width));
         }
 
         if (height % BLOCK_H != 0) {
-            throw "Image height is not divisible by block height";
+            throw std::runtime_error("Image height is not divisible by block height");
         }
     }
 
@@ -685,8 +696,15 @@ class BitsetWriter {
     void write_all_to_file(const bool is_vertical = false) {
         this->flush(); // Add padding bits
 
-        bool compressed = DEBUG ? true : program.files->buffer_size < flushed_bytes.size();
-        //        if (program.files->buffer_size < flushed_bytes.size()) {
+        //        bool compressed = program.files->buffer_size > flushed_bytes.size();
+        bool compressed = true;
+        if (DEBUG) {
+            std::cout << "compressed: " << compressed << " | buffer_size: " << program.files->buffer_size
+                      << " | flushed_bytes.size(): " << flushed_bytes.size() << std::endl;
+        }
+        //        bool compressed = true;
+        //        bool compressed = false;
+        //        if (DEBUG) {
         //            compressed = false;
         //        }
 
@@ -695,7 +713,7 @@ class BitsetWriter {
         header.padding_bits_count = final_padding_bits; // Only 3 bits are used.
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
-        header.is_compressed = compressed;
+        header.is_file_compressed = compressed;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
 
@@ -703,19 +721,23 @@ class BitsetWriter {
         // We assume that header occupies the lower 3 bits and the upper bits are 0.
         // Split header into 3 bytes
         uint8_t byte1 = (header.padding_bits_count & 0b00000111) | ((header.mode & 0b1) << 3) |
-                        ((header.passage & 0b1) << 4) | ((header.is_compressed & 0b1) << 5);
+                        ((header.passage & 0b1) << 4) | ((header.is_file_compressed & 0b1) << 5);
         uint8_t byte2 = static_cast<uint8_t>((header.width >> 0) & 0xFF); // Lower 8 bits of width
         uint8_t byte3 = static_cast<uint8_t>((header.width >> 8) & 0xFF); // Upper 8 bits of width
 
-        if (DEBUG) {
+        if (DEBUG_WRITE_HEADER) {
             std::cout << "Padding: " << header.padding_bits_count << " | mode: " << bool(header.mode)
-                      << " | passage: " << bool(header.passage) << " | is_compressed: " << bool(header.is_compressed)
-                      << " | width: " << header.width << "\n";
+                      << " | passage: " << bool(header.passage)
+                      << " | is_file_compressed: " << bool(header.is_file_compressed) << " | width: " << header.width
+                      << "\n";
             std::cout << "Header bytes:\n";
             std::cout << "  byte1: " << std::bitset<8>(byte1) << "\n";
             std::cout << "  byte2: " << std::bitset<8>(byte2) << "\n";
             std::cout << "  byte3: " << std::bitset<8>(byte3) << "\n";
         }
+
+        // BEFORE clean
+        program.files->written_data.clear();
 
         // Write 3 header bytes to file
         program.files->write_char(byte1);
@@ -724,7 +746,7 @@ class BitsetWriter {
 
         // Write each flushed byte.
         if (compressed) {
-            if (DEBUG) {
+            if (VERBOSE) {
                 std::cout << "Compressed" << std::endl;
             }
             for (std::size_t i = 0; i < flushed_bytes.size(); i++) {
@@ -734,7 +756,7 @@ class BitsetWriter {
                 program.files->write_char(flushed_bytes[i]);
             }
         } else {
-            if (DEBUG) {
+            if (VERBOSE) {
                 std::cout << "Not compressed" << std::endl;
             }
             for (std::size_t i = 0; i < program.files->buffer_size; i++) {
@@ -844,7 +866,6 @@ class BitsetReader {
     int bits_remaining;
     CompressionHeader &header;
 };
-
 
 void init_lookahead_buffer(Program &program) {
     Buffer *buffers = program.buffers;
@@ -960,11 +981,10 @@ void compress(Program &program) {
         tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        //        if (DEBUG) {
-        //            DEBUG_PRINT_LITE("Before process match%c", '\n');
-        //            buffers->debug_print_window();
-        //            buffers->debug_print_lookahead();
-        //        }
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==Before shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
+        }
 
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, bitset_writer);
@@ -972,13 +992,10 @@ void compress(Program &program) {
             StaticProcessor::compress_literal(program, match, bitset_writer);
         }
 
-        //        if (DEBUG) {
-        //            DEBUG_PRINT_LITE("After process match%c", '\n');
-        //            buffers->debug_print_window();
-        //            buffers->debug_print_lookahead();
-        //            DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n---------------\n",
-        //                             match.found, match.offset, match.length, tmp_i);
-        //        }
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==After shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
+        }
     }
 
     // Process end
@@ -1059,7 +1076,7 @@ void decompress(Program &program, CompressionHeader &header) {
 
         // If no flag could be read, exit the loop.
         if (bitset_reader.is_at_the_end_of_file()) {
-            if (DEBUG) {
+            if (INFO) {
                 DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end OUTER%c", '\n');
             }
             break;
@@ -1086,7 +1103,7 @@ void decompress(Program &program, CompressionHeader &header) {
             char char1 = decompress_character(program, bitset_reader);
             const bool should_stop = bitset_reader.is_at_the_end_of_file();
             if (should_stop) {
-                if (DEBUG) {
+                if (INFO) {
                     DEBUG_PRINT_LITE("!!!!!!!!!!Is at the end INNER%c", '\n');
                 }
                 bitset_reader.is_at_the_end_of_file();
@@ -1105,7 +1122,7 @@ namespace AdaptiveProcessor {
 BitsetWriter compress_horizontal(Program &program) {
     auto *buffers = program.buffers;
     auto *file = program.files;
-    BitsetWriter writer(program);
+    BitsetWriter bitset_writer(program);
 
     if (DEBUG) {
         DEBUG_PRINT_LITE("==========================================================\ncompression horizontal %c", '\n');
@@ -1127,30 +1144,30 @@ BitsetWriter compress_horizontal(Program &program) {
         tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        if (DEBUG) {
-            buffers->debug_print_buffers("Before process match | tmp_i: " + std::to_string(tmp_i));
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==Before shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
         }
 
         if (match.found) {
-            StaticProcessor::compress_compressed(program, match, writer);
+            StaticProcessor::compress_compressed(program, match, bitset_writer);
         } else {
-            StaticProcessor::compress_literal(program, match, writer);
+            StaticProcessor::compress_literal(program, match, bitset_writer);
         }
 
-        if (DEBUG) {
-            buffers->debug_print_buffers("After process match | tmp_i: " + std::to_string(tmp_i));
-            DEBUG_PRINT_LITE("is_compressed: %d | offset: %zu | length: %zu | tmp_i: %zu\n", match.found, match.offset,
-                             match.length, tmp_i);
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==After shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
         }
     }
 
-    return writer;
+    return bitset_writer;
 }
 
 BitsetWriter compress_vertical(Program &program) {
     auto *buffers = program.buffers;
     auto *file = program.files;
-    BitsetWriter writer(program);
+    BitsetWriter bitset_writer(program);
 
     if (DEBUG) {
         DEBUG_PRINT_LITE("==========================================================\ncompression vertical %c", '\n');
@@ -1167,22 +1184,24 @@ BitsetWriter compress_vertical(Program &program) {
         tmp_i++;
         lz_match match = buffers->brute_force_search();
 
-        if (DEBUG) {
-            buffers->debug_print_buffers("Before process match | tmp_i: " + std::to_string(tmp_i));
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==Before shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
         }
 
         if (match.found) {
-            StaticProcessor::compress_compressed(program, match, writer);
+            StaticProcessor::compress_compressed(program, match, bitset_writer);
         } else {
-            StaticProcessor::compress_literal(program, match, writer);
+            StaticProcessor::compress_literal(program, match, bitset_writer);
         }
 
-        if (DEBUG) {
-            buffers->debug_print_buffers("After process match | tmp_i: " + std::to_string(tmp_i));
+        if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
+            buffers->debug_print_buffers("==After shifting buffers and reading new char | tmp_i: " +
+                                         std::to_string(tmp_i));
         }
     }
 
-    return writer;
+    return bitset_writer;
 }
 
 void compress(Program &program) {
@@ -1284,6 +1303,9 @@ void decompress(Program &program, CompressionHeader &header) {
 } // namespace AdaptiveProcessor
 
 void decompress_not_compressed(Program &program, CompressionHeader &header) {
+    if (VERBOSE) {
+        std::cout << "Decompress not compressed" << std::endl;
+    }
     BitsetReader bitset_reader(program, header);
     auto *file = program.files;
     auto *buffers = program.buffers;
@@ -1299,19 +1321,25 @@ CompressionHeader pre_decompress(Program &program) {
     uint8_t byte2 = static_cast<uint8_t>(program.files->get_char());
     uint8_t byte3 = static_cast<uint8_t>(program.files->get_char());
 
+    if (VERBOSE) {
+        std::cout << "Decompressing header" << std::endl;
+    }
+
     CompressionHeader header;
     header.padding_bits_count = byte1 & 0b00000111;             // bits 0-2
     header.mode = (byte1 >> 3) & 0b1;                           // bit 3
     header.passage = (byte1 >> 4) & 0b1;                        // bit 4
-    header.is_compressed = (byte1 >> 5) & 0b1;                  // bit 5
+    header.is_file_compressed = (byte1 >> 5) & 0b1;             // bit 5
     header.width = static_cast<unsigned>(byte2 | (byte3 << 8)); // 16-bit width
 
     std::bitset<8> b1(byte1), b2(byte2), b3(byte3);
 
-    if (DEBUG) {
+    if (DEBUG_READ_HEADER) {
         std::cout << "Header bytes:\n";
         std::cout << "  byte1: " << b1 << " | padding_bits_count: " << int(header.padding_bits_count)
-                  << " | mode: " << bool(header.mode) << " | passage: " << bool(header.passage) << "\n";
+                  << " | mode: " << bool(header.mode) << " | passage: " << bool(header.passage)
+                  << " | is_compressed: " << bool(header.is_file_compressed) << " | width: " << header.width
+                  << std::endl;
         std::cout << "  byte2: " << b2 << "\n";
         std::cout << "  byte3: " << b3 << " | width: " << header.width << "\n";
     }
