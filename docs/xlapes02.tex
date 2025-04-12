@@ -1,0 +1,193 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+\setstretch{1.2}
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\thepage}
+\lhead{Brno University of Technology}
+
+% Title Page
+\begin{document}
+    \begin{titlepage}
+        \centering
+        \vspace*{1cm}
+
+        \includegraphics[width=0.25\textwidth]{template-fig/VUT_symbol_barevne_CMYK_CZ}\par\vspace{1cm} % Replace logo.png with actual filename
+
+        {\Large\textbf{Brno University of Technology}}\\[0.5cm]
+        {\large Faculty of Information Technology}\\[2cm]
+
+        {\huge\bfseries Dictionary-Based LZSS Compression with Delta Preprocessing}\\[0.5cm]
+
+        {\large Project Documentation}\\[2cm]
+
+        \begin{flushleft}
+            \textbf{Author:} Zdeněk Lapeš\\
+            \textbf{Login:} \texttt{xlapes02}\\
+            \textbf{Course:} Data Coding and Compression\\
+            \textbf{Semester:} Spring 2025
+        \end{flushleft}
+
+        \vfill
+
+        {\large \today}
+
+    \end{titlepage}
+
+% Table of contents
+    \tableofcontents
+    \newpage
+
+% ------------------------------------------------------------------------------
+    \section*{Abstract}
+    This project implements a modular compression and decompression tool based on the LZSS (Lempel–Ziv–Storer–Szymanski) algorithm. While the core compression logic follows the traditional LZSS scheme, the goal of this work is not to analyze LZSS as a method, but rather to present a concrete implementation that supports both static and adaptive approaches with optional preprocessing using delta encoding.
+
+    The compressor supports command-line usage for compression, decompression, and delta-preprocessing of plain text files. It is implemented in C++14, with an emphasis on maintainability, clarity of structure, and extensibility.
+
+    The output format is standardized and supports optional transformation of input data through delta encoding to improve compression efficiency on numeric sequences.
+
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Introduction}
+    This document describes the implementation of an LZ-based compression tool enhanced with optional preprocessing using delta encoding. The program supports both static and adaptive modes and is designed to handle raw image files effectively.
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Project Goals}
+    The goal of this project was to:
+    \begin{itemize}
+        \item Implement a lossless compression tool using the LZ77 algorithm.
+        \item Add optional delta preprocessing to improve compression ratio.
+        \item Support both static (sequential) and adaptive (block-based) image traversal.
+        \item Provide efficient decompression that restores the original data.
+    \end{itemize}
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Project Structure and Implementation}
+
+    The project is divided into three main parts:
+    \begin{enumerate}
+        \item \textbf{Compressor:} Encodes input data using LZSS. The compressor supports two dictionary strategies:
+        \begin{itemize}
+            \item \emph{Static compression:} the dictionary is constructed from the entire file.
+            \item \emph{Adaptive compression:} the dictionary is built dynamically during compression.
+        \end{itemize}
+        \item \textbf{Decompressor:} Fully reconstructs the original input file from the token stream produced by the compressor. The decoding is efficient due to the format of the tokens (offset, length, next symbol or literal).
+        \item \textbf{Delta Encoder/Decoder:} Optional preprocessing step for the compressor and postprocessing step for the decompressor. It transforms the input by storing differences between adjacent characters, which helps improve compression ratios on sequences with slowly varying values (e.g., numeric logs).
+    \end{enumerate}
+
+    The tool works with input files from specified directories and writes the output to structured folders for compressed and decompressed results. It was tested on various datasets with both static and adaptive compression settings.
+
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Architecture Overview}
+    The program is structured into several key components:
+    \begin{itemize}
+        \item \textbf{Program Parser:} Parses command-line arguments and initializes the application.
+        \item \textbf{File Handler:} Reads and writes files in binary form. It supports adaptive reading using blocks.
+        \item \textbf{Buffer Manager:} Maintains a sliding window and lookahead buffer for LZ77.
+        \item \textbf{Compressor and Decompressor:} Handles the core logic of LZ encoding/decoding.
+        \item \textbf{Bit Writers/Readers:} Encodes bits efficiently to minimize file size.
+    \end{itemize}
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Compression Logic}
+
+    \subsection{LZ77 Encoding}
+    Each byte is scanned with a sliding window. If a match is found, the offset and length are stored; otherwise, a literal is saved.
+
+    \subsection{Static vs. Adaptive}
+    \begin{itemize}
+        \item \textbf{Static mode} reads the file linearly.
+        \item \textbf{Adaptive mode} splits the image into $16 \times 16$ blocks and reads either row-wise or column-wise.
+    \end{itemize}
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Delta Encoding (Preprocessing)}
+    Delta encoding is optionally applied before LZ compression. It transforms the input into differences between neighboring bytes:
+    \begin{itemize}
+        \item \textbf{Encoding:} Replaces each byte with the difference from the previous one.
+        \item \textbf{Decoding:} Reconstructs original values by summing the differences.
+    \end{itemize}
+    This step can improve compression, especially for smooth images or gradual value transitions.
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Decompression}
+    The decompression reconstructs the original file based on the LZ tokens (offset + length) or literals. If delta preprocessing was used, it is reversed at this stage.
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Command-Line Interface}
+    Supported options:
+    \begin{itemize}
+        \item \texttt{-c}: Compress
+        \item \texttt{-d}: Decompress
+        \item \texttt{-i <input>}: Input file
+        \item \texttt{-o <output>}: Output file
+        \item \texttt{-w <width>}: Image width (required for adaptive)
+        \item \texttt{-a}: Enable adaptive mode
+        \item \texttt{-m}: Enable delta encoding
+    \end{itemize}
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Testing}
+
+    To verify the correctness and performance of the compression and decompression pipeline, a dedicated shell script \texttt{test.sh} was created. This script automates a series of tests by executing the compression and decompression pipeline across multiple predefined datasets.
+
+    The tests fall into two categories:
+
+    \begin{itemize}
+        \item \textbf{Custom Tests:} These include small to medium-sized manually created text files located in the \texttt{tests/in/static} and \texttt{tests/in/adaptive} directories. The files test a variety of scenarios including short sequences, repeated patterns, and edge cases in the compressor behavior.
+
+        \item \textbf{Benchmark Data:} The official input data provided by the instructor (located in \texttt{zadani/kko.proj.data}) was used to assess performance on real-world structured data. This includes both grayscale image byte data and synthetic data files.
+    \end{itemize}
+
+    The \texttt{test.sh} script handles:
+    \begin{enumerate}
+        \item Running the compressor with appropriate arguments (static, adaptive, delta-encoded).
+        \item Automatically decompressing the result and comparing it to the original file.
+        \item Verifying correctness via byte-by-byte comparison using \texttt{diff}.
+        \item Checking the compression ratio and optionally reporting warnings if the compressed size exceeds a specified threshold.
+    \end{enumerate}
+
+    The script is located at the root of the project, alongside other key files like the \texttt{Makefile}, \texttt{lz\_codec} binary, and build artifacts. The test output files are saved in \texttt{tests/out}.
+
+    This approach allowed fast iteration and regression testing while modifying the core compression logic. The test set also served to benchmark the effects of delta encoding and block transposition features.
+
+% ------------------------------------------------------------------------------
+
+
+    \section{Conclusion}
+    The project demonstrates a working implementation of an LZ-based compressor with optional delta encoding and adaptive image traversal. It achieves reasonable compression ratios while maintaining lossless fidelity and supports flexible preprocessing for improved performance on real image data.
+
+    \vfill
+    \begin{center}
+        \textit{Thank you for reading!}
+    \end{center}
+
+\end{document}
