@@ -1,8 +1,15 @@
 #!/bin/bash
-set -e
+#set -e
 
 # Path to the executable
 EXECUTABLE=./lz_codec
+
+#make clean
+make
+
+ERRORS=0
+WARNINGS=0
+OK=0
 
 # Arguments:
 #   $1 -> Test name (for logging)
@@ -20,15 +27,20 @@ run_test() {
     echo "----------------------------------------"
     echo "Running test: ${test_name}"
     echo "Compression: ${comp_args}"
-    $EXECUTABLE ${comp_args}
+    if ! $EXECUTABLE ${comp_args}; then
+        echo "❌ Compression failed for ${test_name}"
+        ((ERRORS++))
+        return
+    fi
 
     # Extract the compressed file path from the compressor arguments (-o option)
     local compressed_file
     compressed_file=$(echo "$comp_args" | sed -E 's/.*-o[[:space:]]+([^[:space:]]+).*/\1/')
 
     if [[ ! -f "$original_file" || ! -f "$compressed_file" ]]; then
-        echo "Error: either original file ($original_file) or compressed file ($compressed_file) is missing."
-        exit 1
+        echo "❌ Error: either original file ($original_file) or compressed file ($compressed_file) is missing."
+        ((ERRORS++))
+        return
     fi
 
     local original_size compressed_size
@@ -37,21 +49,26 @@ run_test() {
     echo "Checking size: Original = ${original_size} bytes, Compressed = ${compressed_size} bytes"
 
     if (( compressed_size > original_size / 2 )); then
-        echo "Test ${test_name} size check: WARNING (Compressed file size exceeds 50% of original)"
-#        exit 1
+        echo "⚠️ Test ${test_name} size check: WARNING (Compressed file size exceeds 50% of original): ${compressed_file}: ${compressed_size} | ${original_file}: ${original_size}"
+        ((WARNINGS++))
     else
-        echo "Test ${test_name} size check: OK"
+        echo "✅ Test ${test_name} size check: OK"
     fi
 
     echo "Decompression: ${decomp_args}"
-    $EXECUTABLE ${decomp_args}
+    if ! $EXECUTABLE ${decomp_args}; then
+        echo "❌ Decompression failed for ${test_name}"
+        ((ERRORS++))
+        return
+    fi
 
     echo "Comparing ${original_file} with ${decompressed_file}"
     if diff "${original_file}" "${decompressed_file}" >/dev/null; then
-        echo "Test ${test_name}: OK"
+        echo "✅ Test ${test_name}: OK"
+        ((OK++))
     else
-        echo "Test ${test_name}: FAIL (Files differ)"
-        exit 1
+        echo "❌ Test ${test_name}: FAIL (Files differ)"
+        ((ERRORS++))
     fi
     echo "----------------------------------------"
     echo ""
@@ -67,11 +84,20 @@ for test_name in "${static_tests[@]}"; do
     output_file="tests/out/${test_name}.txt"
     decompressed_file="tests/in/static/${test_name}-decompressed.txt"
 
+    # STATIC
     run_test "${test_name}" \
         "-i ${input_file} -o ${output_file} -w 512 -c" \
         "-i ${output_file} -o ${decompressed_file} -d" \
         "${input_file}" \
         "${decompressed_file}"
+
+
+    # STATIC + PREPROCESS
+#    run_test "${test_name} (static + preprocess)" \
+#        "-i ${input_file} -o ${output_file} -w 512 -c -m" \
+#        "-i ${output_file} -o ${decompressed_file} -d -m" \
+#        "${input_file}" \
+#        "${decompressed_file}"
 done
 
 ########################################
@@ -89,12 +115,42 @@ for file in "${kko_files[@]}"; do
         "tests/in/kko.proj.data/${file}" \
         "tests/in/kko.proj.data/${file}-decompressed.txt"
 
-    # ADAPTIVE (only on nk01.raw as you requested)
-        run_test "${file} (adaptive)" \
-            "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -a" \
-            "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d" \
-            "tests/in/kko.proj.data/${file}" \
-            "tests/in/kko.proj.data/${file}-decompressed.txt"
+    # STATIC + PREPROCESS
+#    run_test "${file} (static + preprocess)" \
+#        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -m" \
+#        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d -m" \
+#        "tests/in/kko.proj.data/${file}" \
+#        "tests/in/kko.proj.data/${file}-decompressed.txt"
+
+    # ADAPTIVE
+    run_test "${file} (adaptive)" \
+        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -a" \
+        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d" \
+        "tests/in/kko.proj.data/${file}" \
+        "tests/in/kko.proj.data/${file}-decompressed.txt"
+
+    # ADAPTIVE + PREPROCESS
+#    run_test "${file} (adaptive + preprocess)" \
+#        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -a -m" \
+#        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d -m" \
+#        "tests/in/kko.proj.data/${file}" \
+#        "tests/in/kko.proj.data/${file}-decompressed.txt"
 done
 
-echo "✅ All tests completed successfully."
+########################################
+# FINAL SUMMARY
+########################################
+echo ""
+echo "======================="
+echo "✅ OK:       ${OK}"
+echo "⚠️ Warnings: ${WARNINGS}"
+echo "❌ Errors:   ${ERRORS}"
+echo "======================="
+
+if (( ERRORS > 0 )); then
+    echo "❌ Some tests failed."
+    exit 1
+else
+    echo "✅ All tests completed successfully."
+    exit 0
+fi

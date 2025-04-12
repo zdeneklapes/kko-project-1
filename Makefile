@@ -116,6 +116,19 @@ endif
 #DIFF_ARGS=tests/in/kko.proj.data/shp2.raw tests/in/kko.proj.data/shp2.raw-decompressed.txt
 
 #-------------------------------------------------------------------------------
+# Delta encoding
+#-------------------------------------------------------------------------------
+#ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t1.txt -o tests/out/t1.txt -w 512 -c -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t1.txt -o tests/in/static/t1-decompressed.txt -d -m
+#DIFF_ARGS=tests/in/static/t1.txt tests/in/static/t1-decompressed.txt
+#DU_ARGS=tests/in/static/t1.txt tests/out/t1.txt
+
+#ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t6-a.txt -o tests/out/t6-a.txt -w 512 -c -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t6-a.txt -o tests/in/static/t6-a-decompressed.txt -d -m
+#DIFF_ARGS=tests/in/static/t6-a.txt tests/in/static/t6-a-decompressed.txt
+#DU_ARGS=tests/in/static/t6-a.txt tests/out/t6-a.txt
+
+#-------------------------------------------------------------------------------
 # Adaptive compressor
 #-------------------------------------------------------------------------------
 #ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/adaptive/t13-a.txt -o tests/out/t13-a.txt -w 4 -c -a
@@ -153,15 +166,15 @@ endif
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/t20-a.txt -o tests/in/adaptive/t20-a-decompressed.txt -d
 #DIFF_ARGS=tests/in/adaptive/t20-a.txt tests/in/adaptive/t20-a-decompressed.txt
 
-#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
-#ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/kko.proj.data/cb.raw-decompressed.txt -d
-#DIFF_ARGS=tests/in/kko.proj.data/cb.raw tests/in/kko.proj.data/cb.raw-decompressed.txt
-#DU_ARGS=tests/in/kko.proj.data/cb.raw tests/out/cb.raw
+ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
+ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/kko.proj.data/cb.raw-decompressed.txt -d
+DIFF_ARGS=tests/in/kko.proj.data/cb.raw tests/in/kko.proj.data/cb.raw-decompressed.txt
+DU_ARGS=tests/in/kko.proj.data/cb.raw tests/out/cb.raw
 
-ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/nk01.raw -o tests/out/nk01.raw -w 512 -c -a
-ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
-DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
-DU_ARGS=tests/in/kko.proj.data/nk01.raw tests/out/nk01.raw
+#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/nk01.raw -o tests/out/nk01.raw -w 512 -c -a
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
+#DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
+#DU_ARGS=tests/in/kko.proj.data/nk01.raw tests/out/nk01.raw
 
 # --------------------------------------------------------
 # Targets

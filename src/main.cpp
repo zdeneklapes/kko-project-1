@@ -50,18 +50,18 @@ static const int BLOCK_H = 16;
 //------------------------------------------------------------------------------
 // Macros
 //------------------------------------------------------------------------------
-#define DEBUG (0)
 #define DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR (0)
 #define DEBUG_BRUTE_FORCE (0)
 #define DEBUG_BRUTE_FORCE_RESULT (0)
 #define DEBUG_READ_HEADER (0)
 #define DEBUG_WRITE_HEADER (0)
-#define INFO (1)
-#define VERBOSE (1)
-#define DEBUG_LITE (DEBUG)
+#define DEBUG_PRE_PROCESSING (0)
+#define INFO (0)
+#define VERBOSE (0)
+#define DEBUG (0)
 #define DEBUG_PRINT_LITE(fmt, ...)                                                                                     \
     do {                                                                                                               \
-        if (DEBUG_LITE)                                                                                                \
+        if (DEBUG)                                                                                                     \
             fprintf(stderr, fmt, __VA_ARGS__);                                                                         \
     } while (0)
 #define DEBUG_PRINT(fmt, ...)                                                                                          \
@@ -69,6 +69,20 @@ static const int BLOCK_H = 16;
         if (DEBUG)                                                                                                     \
             fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__, __VA_ARGS__);                            \
     } while (0)
+
+// Preprocess buffer with delta encoding
+void delta_encode(std::vector<uint8_t> &data) {
+    for (size_t i = data.size() - 1; i > 0; --i) {
+        data[i] = static_cast<uint8_t>(data[i] - data[i - 1]);
+    }
+}
+
+// Undo delta encoding during decompression
+void delta_decode(std::vector<uint8_t> &data) {
+    for (size_t i = 1; i < data.size(); ++i) {
+        data[i] = static_cast<uint8_t>(data[i] + data[i - 1]);
+    }
+}
 
 //------------------------------------------------------------------------------
 // Structs
@@ -702,8 +716,8 @@ class BitsetWriter {
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
         header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
-//        header.is_file_compressed = true;
-//        header.is_file_compressed = false;
+        //        header.is_file_compressed = true;
+        //        header.is_file_compressed = false;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
 
@@ -964,6 +978,12 @@ void compress(Program &program) {
     Buffer *buffers = program.buffers;
     BitsetWriter bitset_writer(program);
 
+    if (program.args->get<bool>("-m")) {
+        std::vector<uint8_t> buffer_vec(program.files->buffer, program.files->buffer + program.files->buffer_size);
+        delta_encode(buffer_vec);
+        std::memcpy(program.files->buffer, buffer_vec.data(), program.files->buffer_size);
+    }
+
     init_lookahead_buffer(program);
 
     int tmp_i = 0;
@@ -1103,6 +1123,9 @@ void decompress(Program &program, CompressionHeader &header) {
         }
     }
 
+    if (program.args->get<bool>("-m")) {
+        delta_decode(program.files->written_data);
+    }
     program.files->flush_written_data_to_file();
 }
 }; // namespace StaticProcessor
@@ -1196,20 +1219,21 @@ BitsetWriter compress_vertical(Program &program) {
 
 void compress(Program &program) {
     BitsetWriter horizontal_writer = compress_horizontal(program);
-    //    BitsetWriter vertical_writer = compress_vertical(program);
-    horizontal_writer.write_all_to_file(false);
+    BitsetWriter vertical_writer = compress_vertical(program);
+    //    horizontal_writer.write_all_to_file(false);
+    //    vertical_writer.write_all_to_file(true);
 
-    //    if (horizontal_writer.get_flushed_bytes().size() <= vertical_writer.get_flushed_bytes().size()) {
-    //        if (DEBUG) {
-    //            DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
-    //        }
-    //        horizontal_writer.write_all_to_file(false);
-    //    } else {
-    //        if (DEBUG) {
-    //            DEBUG_PRINT_LITE("Writing vertical%c", '\n');
-    //        }
-    //        vertical_writer.write_all_to_file(true);
-    //    }
+    if (horizontal_writer.get_flushed_bytes().size() <= vertical_writer.get_flushed_bytes().size()) {
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
+        }
+        horizontal_writer.write_all_to_file(false);
+    } else {
+        if (DEBUG) {
+            DEBUG_PRINT_LITE("Writing vertical%c", '\n');
+        }
+        vertical_writer.write_all_to_file(true);
+    }
 }
 
 void decompress(Program &program, CompressionHeader &header) {
