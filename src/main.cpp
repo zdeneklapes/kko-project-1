@@ -72,6 +72,9 @@ static const int BLOCK_H = 16;
 
 // Preprocess buffer with delta encoding
 void delta_encode(std::vector<uint8_t> &data) {
+    if (DEBUG) {
+        std::cout << "Delta encoding" << std::endl;
+    }
     for (size_t i = data.size() - 1; i > 0; --i) {
         data[i] = static_cast<uint8_t>(data[i] - data[i - 1]);
     }
@@ -79,6 +82,9 @@ void delta_encode(std::vector<uint8_t> &data) {
 
 // Undo delta encoding during decompression
 void delta_decode(std::vector<uint8_t> &data) {
+    if (DEBUG) {
+        std::cout << "Delta decoding" << std::endl;
+    }
     for (size_t i = 1; i < data.size(); ++i) {
         data[i] = static_cast<uint8_t>(data[i] + data[i - 1]);
     }
@@ -118,6 +124,7 @@ class CompressionHeader {
     unsigned mode : 1;               // static=0 vs. adaptive=1
     unsigned passage : 1;            // used only for adaptive: 0-horizontal, 1-vertical
     unsigned is_file_compressed : 1; // 0-not compressed, 1-compressed
+    unsigned is_preprocessed : 1;    // 0-not preprocessed, 1-preprocessed
     unsigned width : 16;             // width of the image
 
     bool get_is_static() const { return mode == 0; }
@@ -127,6 +134,8 @@ class CompressionHeader {
     bool get_is_vertical() const { return passage == 1; }
 
     bool get_is_compressed() const { return is_file_compressed == 1; }
+
+    bool get_is_preprocessed() const { return is_preprocessed == 1; }
 
     int get_width() const { return width; }
 };
@@ -217,6 +226,11 @@ class Program {
     bool is_static_compress() {
         const bool is_sequential = args->get<bool>("-c") && !args->get<bool>("-a");
         return is_sequential;
+    }
+
+    bool is_preprocess() {
+        const bool is_preprocess = args->get<bool>("-m");
+        return is_preprocess;
     }
 
     bool is_adaptive_compress() {
@@ -341,7 +355,7 @@ class File {
   public:
     // Returns a pointer to a dynamically allocated char array containing the file's data.
     // The file size is returned via the out parameter 'size'.
-    std::tuple<char *, std::size_t> readBinaryFileToCharArray(const std::string &filename) {
+    std::tuple<char *, std::size_t> read_binary_file_to_char_array(const std::string &filename) {
         // Open the file in binary mode.
         std::ifstream file(filename, std::ios::binary);
         if (!file) {
@@ -375,8 +389,8 @@ class File {
             throw std::runtime_error("Input file does not exist");
         }
         out = std::ofstream(out_filepath, std::ios::binary);
-        auto [buffer, buffer_size] = readBinaryFileToCharArray(in_filepath);
-        this->buffer = buffer;
+        auto [buffer, buffer_size] = read_binary_file_to_char_array(in_filepath);
+        this->buffer = reinterpret_cast<uint8_t *>(buffer);
         this->buffer_size = buffer_size;
 
         const bool is_empty_file = buffer_size == 0;
@@ -407,8 +421,6 @@ class File {
         //            // (ifstream typically does not buffer output, but we still close it)
         //            in.close();
         //        }
-
-        fclose(in);
 
         delete[] buffer;
     }
@@ -623,7 +635,7 @@ class File {
         out.flush();
     }
 
-    void flush_written_data_to_file() {
+    void flush_to_file_not_compressed() {
         if (!out.is_open()) {
             throw std::runtime_error("Output stream is not open.");
         }
@@ -660,11 +672,10 @@ class File {
     // Retrieve input/output filenames from Program
     //    std::ifstream in;
     Program &program;
-    FILE *in;
     std::ofstream out;
     uint8_t current_char = '\0';
     bool EOF_reached = false; // track if we hit EOF
-    char *buffer = nullptr;
+    uint8_t *buffer = nullptr;
     std::size_t buffer_size;
     std::vector<BlockHeader> block_headers;
     std::vector<std::vector<uint8_t>> adaptive_blocks; // blocks stored row-wise
@@ -707,7 +718,7 @@ class BitsetWriter {
     }
 
     // Write the header and all stored flushed bytes to file.
-    void write_all_to_file(const bool is_vertical = false) {
+    void flush_to_file_after_compression(const bool is_vertical = false) {
         this->flush(); // Add padding bits
 
         // Create and populate the header.
@@ -715,9 +726,12 @@ class BitsetWriter {
         header.padding_bits_count = final_padding_bits; // Only 3 bits are used.
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
-        header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
-        //        header.is_file_compressed = true;
+                        header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
+//        header.is_file_compressed = true;
         //        header.is_file_compressed = false;
+        header.is_preprocessed = program.args->get<bool>("-m");
+        //        header.is_preprocessed = true;
+        //        header.is_preprocessed = false;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
 
@@ -725,7 +739,8 @@ class BitsetWriter {
         // We assume that header occupies the lower 3 bits and the upper bits are 0.
         // Split header into 3 bytes
         uint8_t byte1 = (header.padding_bits_count & 0b00000111) | ((header.mode & 0b1) << 3) |
-                        ((header.passage & 0b1) << 4) | ((header.is_file_compressed & 0b1) << 5);
+                        ((header.passage & 0b1) << 4) | ((header.is_file_compressed & 0b1) << 5) |
+                        ((header.is_preprocessed & 0b1) << 6);
         uint8_t byte2 = static_cast<uint8_t>((header.width >> 0) & 0xFF); // Lower 8 bits of width
         uint8_t byte3 = static_cast<uint8_t>((header.width >> 8) & 0xFF); // Upper 8 bits of width
 
@@ -763,16 +778,20 @@ class BitsetWriter {
             if (VERBOSE) {
                 std::cout << "Not compressed" << std::endl;
             }
-            for (std::size_t i = 0; i < program.files->buffer_size; i++) {
-                if (DEBUG) {
-                    std::cout << "program.files->buffer[" << i << "]: " << std::bitset<8>(program.files->buffer[i])
-                              << std::endl;
-                }
-                const auto _char = static_cast<char>(program.files->buffer[i]);
-                program.files->write_char(_char);
+
+            std::ifstream in_file(program.args->get<std::string>("-i"), std::ios::binary);
+            if (!in_file.is_open()) {
+                throw std::runtime_error("Failed to reopen input file for uncompressed copy.");
             }
+
+            char byte;
+            while (in_file.get(byte)) {
+                program.files->write_char(static_cast<uint8_t>(byte));
+            }
+
+            in_file.close();
         }
-        program.files->flush_written_data_to_file();
+        program.files->flush_to_file_not_compressed();
     }
 
   private:
@@ -976,12 +995,14 @@ void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_wr
 void compress(Program &program) {
     //    DEBUG_PRINT("%c", '\n');
     Buffer *buffers = program.buffers;
+    File *files = program.files;
     BitsetWriter bitset_writer(program);
 
-    if (program.args->get<bool>("-m")) {
-        std::vector<uint8_t> buffer_vec(program.files->buffer, program.files->buffer + program.files->buffer_size);
-        delta_encode(buffer_vec);
-        std::memcpy(program.files->buffer, buffer_vec.data(), program.files->buffer_size);
+    if (program.is_preprocess() && program.is_static_compress()) {
+        const auto data = new std::vector<uint8_t>(files->buffer, files->buffer + files->buffer_size);
+        delta_encode(*data);
+        memcpy(files->buffer, data->data(), files->buffer_size);
+        delete data;
     }
 
     init_lookahead_buffer(program);
@@ -1011,7 +1032,7 @@ void compress(Program &program) {
     // Process end
     //    process_end(program, bitset_writer);
 
-    bitset_writer.write_all_to_file();
+    bitset_writer.flush_to_file_after_compression();
 }
 
 void decompress_compressed(Program &program, BitsetReader &bitset_reader, std::size_t offset, std::size_t length) {
@@ -1123,10 +1144,15 @@ void decompress(Program &program, CompressionHeader &header) {
         }
     }
 
-    if (program.args->get<bool>("-m")) {
+    if (DEBUG) {
+        std::cout << "Width: " << header.width << std::endl;
+    }
+
+    if (header.get_is_preprocessed()) {
         delta_decode(program.files->written_data);
     }
-    program.files->flush_written_data_to_file();
+
+    program.files->flush_to_file_not_compressed();
 }
 }; // namespace StaticProcessor
 
@@ -1227,12 +1253,12 @@ void compress(Program &program) {
         if (DEBUG) {
             DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
         }
-        horizontal_writer.write_all_to_file(false);
+        horizontal_writer.flush_to_file_after_compression(false);
     } else {
         if (DEBUG) {
             DEBUG_PRINT_LITE("Writing vertical%c", '\n');
         }
-        vertical_writer.write_all_to_file(true);
+        vertical_writer.flush_to_file_after_compression(true);
     }
 }
 
@@ -1327,7 +1353,7 @@ void decompress_not_compressed(Program &program, CompressionHeader &header) {
     while (!program.files->EOF_reached) {
         program.files->write_char(program.files->get_char());
     }
-    program.files->flush_written_data_to_file();
+    program.files->flush_to_file_not_compressed();
 }
 
 CompressionHeader pre_decompress(Program &program) {
@@ -1344,6 +1370,7 @@ CompressionHeader pre_decompress(Program &program) {
     header.mode = (byte1 >> 3) & 0b1;                           // bit 3
     header.passage = (byte1 >> 4) & 0b1;                        // bit 4
     header.is_file_compressed = (byte1 >> 5) & 0b1;             // bit 5
+    header.is_preprocessed = (byte1 >> 6) & 0b1;                // bit 6
     header.width = static_cast<unsigned>(byte2 | (byte3 << 8)); // 16-bit width
 
     std::bitset<8> b1(byte1), b2(byte2), b3(byte3);
@@ -1353,7 +1380,7 @@ CompressionHeader pre_decompress(Program &program) {
         std::cout << "  byte1: " << b1 << " | padding_bits_count: " << int(header.padding_bits_count)
                   << " | mode: " << bool(header.mode) << " | passage: " << bool(header.passage)
                   << " | is_compressed: " << bool(header.is_file_compressed) << " | width: " << header.width
-                  << std::endl;
+                  << " | is_preprocessed: " << bool(header.is_preprocessed) << std::endl;
         std::cout << "  byte2: " << b2 << "\n";
         std::cout << "  byte3: " << b3 << " | width: " << header.width << "\n";
     }
