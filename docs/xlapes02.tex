@@ -48,13 +48,13 @@
     \newpage
 
 % ------------------------------------------------------------------------------
+
     \section*{Abstract}
     This project implements a modular compression and decompression tool based on the LZSS (Lempel–Ziv–Storer–Szymanski) algorithm. While the core compression logic follows the traditional LZSS scheme, the goal of this work is not to analyze LZSS as a method, but rather to present a concrete implementation that supports both static and adaptive approaches with optional preprocessing using delta encoding.
 
     The compressor supports command-line usage for compression, decompression, and delta-preprocessing of plain text files. It is implemented in C++14, with an emphasis on maintainability, clarity of structure, and extensibility.
 
     The output format is standardized and supports optional transformation of input data through delta encoding to improve compression efficiency on numeric sequences.
-
 
 % ------------------------------------------------------------------------------
 
@@ -151,6 +151,55 @@
         \item \texttt{-a}: Enable adaptive mode
         \item \texttt{-m}: Enable delta encoding
     \end{itemize}
+
+% ------------------------------------------------------------------------------
+    \section{Results}
+    {
+        \scriptsize
+        \begin{tabular}{lrrrrr}
+            \hline
+            Test                               & Original (B) & Compressed (B) & Ratio (\%) & OK? & Times (s)        \\
+            \hline
+            cb.raw (static)                    & 262144       & 20122          & 7.68       & OK  & C:0.165 D:0.029  \\
+            cb.raw (static + preprocess)       & 262144       & 20156          & 7.69       & OK  & C:0.270 D:0.030  \\
+            cb.raw (adaptive)                  & 262144       & 20122          & 7.68       & OK  & C:0.481 D:0.031  \\
+            cb.raw (adaptive + preprocess)     & 262144       & 20125          & 7.68       & OK  & C:1.636 D:0.032  \\
+            cb2.raw (static)                   & 262144       & 21099          & 8.05       & OK  & C:0.336 D:0.030  \\
+            cb2.raw (static + preprocess)      & 262144       & 22191          & 8.47       & OK  & C:1.178 D:0.030  \\
+            cb2.raw (adaptive)                 & 262144       & 21099          & 8.05       & OK  & C:2.853 D:0.031  \\
+            cb2.raw (adaptive + preprocess)    & 262144       & 24284          & 9.26       & OK  & C:4.768 D:0.039  \\
+            df1h.raw (static)                  & 262144       & 20341          & 7.76       & OK  & C:0.114 D:0.029  \\
+            df1h.raw (static + preprocess)     & 262144       & 20099          & 7.67       & OK  & C:0.114 D:0.030  \\
+            df1h.raw (adaptive)                & 262144       & 20341          & 7.76       & OK  & C:0.408 D:0.030  \\
+            df1h.raw (adaptive + preprocess)   & 262144       & 20099          & 7.67       & OK  & C:0.410 D:0.032  \\
+            df1hvx.raw (static)                & 262144       & 23914          & 9.12       & OK  & C:1.819 D:0.032  \\
+            df1hvx.raw (static + preprocess)   & 262144       & 22495          & 8.58       & OK  & C:2.432 D:0.033  \\
+            df1hvx.raw (adaptive)              & 262144       & 23914          & 9.12       & OK  & C:14.516 D:0.035 \\
+            df1hvx.raw (adaptive + preprocess) & 262144       & 23044          & 8.79       & OK  & C:15.222 D:0.034 \\
+            df1v.raw (static)                  & 262144       & 25285          & 9.65       & OK  & C:3.333 D:0.034  \\
+            df1v.raw (static + preprocess)     & 262144       & 20101          & 7.67       & OK  & C:0.117 D:0.029  \\
+            df1v.raw (adaptive)                & 262144       & 25285          & 9.65       & OK  & C:7.229 D:0.040  \\
+            df1v.raw (adaptive + preprocess)   & 262144       & 21767          & 8.30       & OK  & C:7.288 D:0.034  \\
+            shp.raw (static)                   & 262144       & 20155          & 7.69       & OK  & C:0.173 D:0.032  \\
+            shp.raw (static + preprocess)      & 262144       & 20157          & 7.69       & OK  & C:0.167 D:0.032  \\
+            shp.raw (adaptive)                 & 262144       & 20108          & 7.67       & OK  & C:0.496 D:0.035  \\
+            shp.raw (adaptive + preprocess)    & 262144       & 20103          & 7.67       & OK  & C:0.494 D:0.036  \\
+            shp1.raw (static)                  & 262144       & 28786          & 10.98      & OK  & C:4.983 D:0.035  \\
+            shp1.raw (static + preprocess)     & 262144       & 29149          & 11.12      & OK  & C:4.625 D:0.035  \\
+            shp1.raw (adaptive)                & 262144       & 21311          & 8.13       & OK  & C:9.105 D:0.035  \\
+            shp1.raw (adaptive + preprocess)   & 262144       & 21600          & 8.24       & OK  & C:9.000 D:0.035  \\
+            shp2.raw (static)                  & 262144       & 37010          & 14.12      & OK  & C:7.320 D:0.040  \\
+            shp2.raw (static + preprocess)     & 262144       & 39827          & 15.19      & OK  & C:7.595 D:0.042  \\
+            shp2.raw (adaptive)                & 262144       & 28177          & 10.75      & OK  & C:13.083 D:0.037 \\
+            shp2.raw (adaptive + preprocess)   & 262144       & 29764          & 11.35      & OK  & C:13.013 D:0.039 \\
+            nk01.raw (static)                  & 262144       & 262147         & 100.00     & OK  & C:38.210 D:0.089 \\
+            nk01.raw (static + preprocess)     & 262144       & 262147         & 100.00     & OK  & C:39.182 D:0.088 \\
+            nk01.raw (adaptive)                & 262144       & 262147         & 100.00     & OK  & C:76.903 D:0.086 \\
+            nk01.raw (adaptive + preprocess)   & 262144       & 262147         & 100.00     & OK  & C:76.703 D:0.086 \\
+            \hline
+        \end{tabular}
+    }
+
 
 % ------------------------------------------------------------------------------
 

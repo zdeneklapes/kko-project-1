@@ -104,6 +104,7 @@ def run_test(description, input_file, output_file, decompressed_file,
       4) Compare to original
     Returns a dict with results and stats.
     """
+    print(f"Running test: {description}")
     res = {
         "description": description,
         "input_file": input_file,
