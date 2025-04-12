@@ -116,7 +116,7 @@ endif
 #DIFF_ARGS=tests/in/kko.proj.data/shp2.raw tests/in/kko.proj.data/shp2.raw-decompressed.txt
 
 #-------------------------------------------------------------------------------
-# Delta encoding
+# Static + preprocessing
 #-------------------------------------------------------------------------------
 #ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t1.txt -o tests/out/t1.txt -w 512 -c -m
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/t1.txt -o tests/in/static/t1-decompressed.txt -d
@@ -128,10 +128,10 @@ endif
 #DIFF_ARGS=tests/in/static/t6-a.txt tests/in/static/t6-a-decompressed.txt
 #DU_ARGS=tests/in/static/t6-a.txt tests/out/t6-a.txt
 
-ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t13.txt -o tests/out/t13.txt -w 512 -c -m
-ARGUMENTS_DECOMPRESSOR := -i tests/out/t13.txt -o tests/in/static/t13-decompressed.txt -d
-DIFF_ARGS=tests/in/static/t13.txt tests/in/static/t13-decompressed.txt
-DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
+#ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t13.txt -o tests/out/t13.txt -w 512 -c -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t13.txt -o tests/in/static/t13-decompressed.txt -d
+#DIFF_ARGS=tests/in/static/t13.txt tests/in/static/t13-decompressed.txt
+#DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
 
 #-------------------------------------------------------------------------------
 # Adaptive compressor
@@ -180,6 +180,14 @@ DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
 #DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
 #DU_ARGS=tests/in/kko.proj.data/nk01.raw tests/out/nk01.raw
+
+#-------------------------------------------------------------------------------
+# Adaptive + preprocessing
+#-------------------------------------------------------------------------------
+#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/adaptive/t13-a.txt -o tests/out/t13-a.txt -w 4 -c -a -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t13-a.txt -o tests/in/adaptive/t13-a-decompressed.txt -d
+#DIFF_ARGS=tests/in/adaptive/t13-a.txt tests/in/adaptive/t13-a-decompressed.txt
+#DU_ARGS=tests/in/adaptive/t13-a.txt tests/out/t13-a.txt
 
 # --------------------------------------------------------
 # Targets

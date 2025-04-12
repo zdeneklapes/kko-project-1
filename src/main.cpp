@@ -1,10 +1,13 @@
-//
-// Created by Zdeněk Lapeš on 26/03/2025.
-//
+/**
+ * KKO - Dictionary-Based LZSS Compression with Delta Preprocessing
+ *
+ * @author Zdeněk Lapeš (xlapes02)
+ * @date 26/03/2025
+ */
 
 // TODO
-// - Fix adaptive
-// - Pre compression algo - maybe delta? or something else?
+// - test on merlin
+// - komentare vsecho vcetne souboruove hlavicky a kazde funkce a tridy a vseho dalsiho...
 
 //------------------------------------------------------------------------------
 // Includes
@@ -72,7 +75,7 @@ static const int BLOCK_H = 16;
 
 // Preprocess buffer with delta encoding
 void delta_encode(std::vector<uint8_t> &data) {
-    if (DEBUG) {
+    if (DEBUG_PRE_PROCESSING) {
         std::cout << "Delta encoding" << std::endl;
     }
     for (size_t i = data.size() - 1; i > 0; --i) {
@@ -82,7 +85,7 @@ void delta_encode(std::vector<uint8_t> &data) {
 
 // Undo delta encoding during decompression
 void delta_decode(std::vector<uint8_t> &data) {
-    if (DEBUG) {
+    if (DEBUG_PRE_PROCESSING) {
         std::cout << "Delta decoding" << std::endl;
     }
     for (size_t i = 1; i < data.size(); ++i) {
@@ -425,7 +428,7 @@ class File {
         delete[] buffer;
     }
 
-    void prepare_adaptive_blocks(int image_width) {
+    void prepare_adaptive_blocks_for_compression(int image_width) {
         const int block_size = BLOCK_W * BLOCK_H;
 
         if (DEBUG) {
@@ -444,6 +447,12 @@ class File {
                 if (read_vertically) {
                     block = transpose_block(block);
                 }
+
+                // Delta encode if preprocessing is enabled
+                if (program.is_preprocess()) {
+                    delta_encode(block);
+                }
+
                 adaptive_blocks.push_back(block);
                 block.clear();
             }
@@ -454,6 +463,11 @@ class File {
             if (read_vertically) {
                 block = transpose_block(block);
             }
+
+            if (program.is_preprocess()) {
+                delta_encode(block);
+            }
+
             adaptive_blocks.push_back(block);
         }
 
@@ -468,8 +482,7 @@ class File {
             }
         }
     }
-
-    void prepare_adaptive_blocks_use_written_data(int image_width) {
+    void prepare_adaptive_blocks_for_decompression(int image_width, CompressionHeader &header) {
         const int block_size = BLOCK_W * BLOCK_H;
 
         DEBUG_PRINT_LITE("Preparing adaptive blocks from written data - image width: %d | total bytes: %zu\n",
@@ -485,16 +498,27 @@ class File {
                 if (read_vertically) {
                     block = transpose_block(block);
                 }
+
+                // Decode if preprocessing was used
+                if (header.get_is_preprocessed()) {
+                    delta_decode(block);
+                }
+
                 adaptive_blocks.push_back(block);
                 block.clear();
             }
         }
 
-        // Push final partial block if any
+        // Handle last partial block
         if (!block.empty()) {
             if (read_vertically) {
                 block = transpose_block(block);
             }
+
+            if (program.is_preprocess()) {
+                delta_decode(block);
+            }
+
             adaptive_blocks.push_back(block);
         }
 
@@ -534,7 +558,7 @@ class File {
             if (image_width <= 0) {
                 throw std::runtime_error("Image width (-w) must be set and > 0 for adaptive reading.");
             }
-            prepare_adaptive_blocks(image_width);
+            prepare_adaptive_blocks_for_compression(image_width);
         }
 
         std::vector<uint8_t> &block = adaptive_blocks[current_block_index];
@@ -591,6 +615,10 @@ class File {
     }
 
     bool write_char(uint8_t in_byte) {
+        // Delta decode if preprocessing was used
+        //            if (program.is_preprocess()) {
+        //                delta_decode(block);
+        //            }
         written_data.push_back(in_byte); // store before writing to file
 
         //        if (!this->out.is_open()) {
@@ -614,7 +642,7 @@ class File {
         return true;
     }
 
-    void write_adaptive_blocks_to_file(const int width) {
+    void write_decompressed_file(const int width) {
         if (!out.is_open()) {
             throw std::runtime_error("Output stream is not open.");
         }
@@ -626,9 +654,10 @@ class File {
         DEBUG_PRINT_LITE("Writing; block_per_row: %d | block_per_col: %d | total_blocks: %d\n", blocks_per_row,
                          blocks_per_col, total_blocks);
 
-        for (const auto &block : adaptive_blocks) {
+        for (auto block : adaptive_blocks) {
+
             for (const auto &char_in_block : block) {
-                out.put(char_in_block);
+                out.put(static_cast<char>(char_in_block));
             }
         }
 
@@ -726,9 +755,9 @@ class BitsetWriter {
         header.padding_bits_count = final_padding_bits; // Only 3 bits are used.
         header.mode = program.args->get<bool>("-a");
         header.passage = is_vertical;
-                        header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
-//        header.is_file_compressed = true;
-        //        header.is_file_compressed = false;
+        header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
+        //        header.is_file_compressed = true;
+        //                header.is_file_compressed = false;
         header.is_preprocessed = program.args->get<bool>("-m");
         //        header.is_preprocessed = true;
         //        header.is_preprocessed = false;
@@ -1322,7 +1351,7 @@ void decompress(Program &program, CompressionHeader &header) {
     if (DEBUG) {
         DEBUG_PRINT_LITE("Width: %d | Height: %d\n", header.width);
     }
-    file->prepare_adaptive_blocks_use_written_data(header.width);
+    file->prepare_adaptive_blocks_for_decompression(header.width, header);
     if (DEBUG) {
         DEBUG_PRINT_LITE("written_data size: %zu\n", file->written_data.size());
     }
@@ -1338,7 +1367,7 @@ void decompress(Program &program, CompressionHeader &header) {
     }
 
     // Write pixels block by block in raster scan order
-    file->write_adaptive_blocks_to_file(header.width);
+    file->write_decompressed_file(header.width);
 }
 } // namespace AdaptiveProcessor
 

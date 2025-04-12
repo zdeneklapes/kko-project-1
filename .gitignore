@@ -5,6 +5,7 @@ build/
 tmp/
 third_party/
 tests/out/
+tests/in/**/*decompressed*
 
 
 *.log
