@@ -33,7 +33,6 @@ static const std::size_t FLAG_SIZE_BITS = 1;
 static const std::size_t OFFSET_SIZE_BITS = 13; // 2^13 = 8192 bytes for search buffer
 static const std::size_t LENGTH_SIZE_BITS = 5;  // 2^5 = 32 bytes for look-ahead buffer
 static const std::size_t MIN_MATCH_LENGTH = 3;  // At least match 3 characters to do compression
-static const std::size_t LITERAL_SIZE = MIN_MATCH_LENGTH - 1;
 static const std::size_t CHARACTER_SIZE_BITS = 8;
 static const std::size_t ADAPTIVE_BLOCK_WIDTH = 16;
 static const std::size_t ADAPTIVE_BLOCK_HEIGHT = 16;
@@ -84,7 +83,6 @@ void delta_decode(std::vector<uint8_t> &data) {
 //------------------------------------------------------------------------------
 // Structs
 //------------------------------------------------------------------------------
-
 /**
  * Simple structure to store match information.
  */
@@ -93,21 +91,6 @@ struct lz_match {
     std::size_t offset = 0;
     std::size_t length = 0;
 };
-
-std::size_t wrap_index(std::size_t i, std::size_t buffer_size);
-
-// Encoded structure
-struct token {
-    unsigned int flag : 1; // 1 bit: 0 indicates compressed token
-
-    // if flag == 1
-    unsigned int offset : 13; // 13 bits for the sliding-window offset
-    unsigned int length : 5;  // 5 bits for the match length
-
-    // if flag == 0
-    unsigned int literal : 16; // 16 bits to pack 2 literal characters (8 bits each)
-};
-typedef struct token token_t;
 
 class CompressionHeader {
   public:
@@ -131,15 +114,12 @@ class CompressionHeader {
     int get_width() const { return width; }
 };
 
-struct BlockHeader {
-    bool is_transposed;
-};
 
 //------------------------------------------------------------------------------
 // Forward declarations
 //------------------------------------------------------------------------------
 
-class Buffer;
+struct Buffer;
 
 class Program;
 
@@ -148,7 +128,6 @@ class File;
 //------------------------------------------------------------------------------
 // Classes
 //------------------------------------------------------------------------------
-
 class Program {
   public:
     argparse::ArgumentParser *args = nullptr;
@@ -694,7 +673,6 @@ class File {
     bool EOF_reached = false; // track if we hit EOF
     uint8_t *buffer = nullptr;
     std::size_t buffer_size;
-    std::vector<BlockHeader> block_headers;
     std::vector<std::vector<uint8_t>> adaptive_blocks; // blocks stored row-wise
     unsigned long long int buffer_head = 0;
     unsigned long long int current_block_index = 0;
@@ -1492,6 +1470,7 @@ int main(int argc, char **argv) {
         // ------------------
         std::cerr << err.what() << std::endl;
         std::cerr << program;
+        delete program->files;
         delete program->buffers;
         delete program;
         return 1;
@@ -1507,6 +1486,7 @@ int main(int argc, char **argv) {
     // ------------------
     // Clean up
     // ------------------
+    delete program->files;
     delete program->buffers;
     delete program;
     return 0;

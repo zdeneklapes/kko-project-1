@@ -128,10 +128,10 @@ endif
 #DIFF_ARGS=tests/in/static/t6-a.txt tests/in/static/t6-a-decompressed.txt
 #DU_ARGS=tests/in/static/t6-a.txt tests/out/t6-a.txt
 
-#ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t13.txt -o tests/out/t13.txt -w 512 -c -m
-#ARGUMENTS_DECOMPRESSOR := -i tests/out/t13.txt -o tests/in/static/t13-decompressed.txt -d
-#DIFF_ARGS=tests/in/static/t13.txt tests/in/static/t13-decompressed.txt
-#DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
+ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t13.txt -o tests/out/t13.txt -w 512 -c -m
+ARGUMENTS_DECOMPRESSOR := -i tests/out/t13.txt -o tests/in/static/t13-decompressed.txt -d
+DIFF_ARGS=tests/in/static/t13.txt tests/in/static/t13-decompressed.txt
+DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
 
 #-------------------------------------------------------------------------------
 # Adaptive compressor
