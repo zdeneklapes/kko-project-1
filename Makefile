@@ -20,22 +20,79 @@ DEPENDENCIES := $(OBJECTS:.o=.d)
 # --------------------------------------------------------
 CXX := g++
 
-DEBUG_FLAGS   := -g -O0
+#FLAGS   := -g -O0
+#FLAGS   := -O0
+#FLAGS   := -g
+FLAGS   := -O1
 #-fsanitize=address -fsanitize=leak
-RELEASE_FLAGS := -O3 -Werror
 
 CXXFLAGS := -std=c++17 -fms-extensions -Wall -Wextra -pedantic
 
 LDFLAGS :=
 LDLIBS   := -lm
 
-ifdef RELEASE
-	CXXFLAGS += $(RELEASE_FLAGS)
-else
-	CXXFLAGS += $(DEBUG_FLAGS)
-endif
+CXXFLAGS += $(FLAGS)
 
 
+# --------------------------------------------------------
+# Targets
+# --------------------------------------------------------
+.PHONY: all clean run1 pack docker-build docker-run
+
+# Default target builds the executable
+all: $(EXECUTABLE)
+
+# Link final executable from object files
+$(EXECUTABLE): $(OBJECTS)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+
+# Compile each .cpp => .o in build/, generating .d files
+$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -I$(INCDIR) -I$(INCLUDES) -MMD -MP -c $< -o $@
+
+# Remove build artifacts
+clean:
+	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE) compile_commands.json valgrind.log xlapes02.pdf tests/in/kko.proj.data/*decompressed*
+
+doc:
+	$(MAKE) -C docs
+	cp docs/out/xlapes02.pdf .
+
+# Example packaging target (adjust files as needed)
+pack:
+	zip -r xlapes02.zip $(SRCDIR)/*.cpp Makefile README.md third_party/argparse/ tests/in/kko.proj.data/ benchmarks.py test.sh Dockerfile docker-compose.yml
+
+rsync-to-merlin:
+	scp xlapes02.zip eva:/homes/eva/xl/xlapes02
+
+# Docker targets
+docker-build:
+	docker compose build
+
+docker-run:
+	docker compose run --rm --service-ports kko fish
+
+# Include dependency files if they exist
+-include $(DEPENDENCIES)
+
+
+.PHONY: clang-format
+clang-format:
+	clang-format -i $(SRCDIR)/*.cpp
+
+.PHONY: clang-tidy
+clang-tidy:
+	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp
+
+bear: ## Create compilation database
+	bear $(MAKE) all
+
+
+#-------------------------------------------------------------------------------
+# Debugging
+#-------------------------------------------------------------------------------
 #ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t1.txt -o tests/out/t1.txt -w 512 -c
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/t1.txt -o tests/in/static/t1-decompressed.txt -d
 #DIFF_ARGS=tests/in/static/t1.txt tests/in/static/t1-decompressed.txt
@@ -116,17 +173,22 @@ endif
 #DIFF_ARGS=tests/in/kko.proj.data/shp2.raw tests/in/kko.proj.data/shp2.raw-decompressed.txt
 
 #-------------------------------------------------------------------------------
-# Delta encoding
+# Static + preprocessing
 #-------------------------------------------------------------------------------
 #ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t1.txt -o tests/out/t1.txt -w 512 -c -m
-#ARGUMENTS_DECOMPRESSOR := -i tests/out/t1.txt -o tests/in/static/t1-decompressed.txt -d -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t1.txt -o tests/in/static/t1-decompressed.txt -d
 #DIFF_ARGS=tests/in/static/t1.txt tests/in/static/t1-decompressed.txt
 #DU_ARGS=tests/in/static/t1.txt tests/out/t1.txt
 
 #ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t6-a.txt -o tests/out/t6-a.txt -w 512 -c -m
-#ARGUMENTS_DECOMPRESSOR := -i tests/out/t6-a.txt -o tests/in/static/t6-a-decompressed.txt -d -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t6-a.txt -o tests/in/static/t6-a-decompressed.txt -d
 #DIFF_ARGS=tests/in/static/t6-a.txt tests/in/static/t6-a-decompressed.txt
 #DU_ARGS=tests/in/static/t6-a.txt tests/out/t6-a.txt
+
+#ARGUMENTS_COMPRESSOR_STATIC := -i tests/in/static/t13.txt -o tests/out/t13.txt -w 512 -c -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t13.txt -o tests/in/static/t13-decompressed.txt -d
+#DIFF_ARGS=tests/in/static/t13.txt tests/in/static/t13-decompressed.txt
+#DU_ARGS=tests/in/static/t13.txt tests/out/t13.txt
 
 #-------------------------------------------------------------------------------
 # Adaptive compressor
@@ -166,60 +228,23 @@ endif
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/t20-a.txt -o tests/in/adaptive/t20-a-decompressed.txt -d
 #DIFF_ARGS=tests/in/adaptive/t20-a.txt tests/in/adaptive/t20-a-decompressed.txt
 
-ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
-ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/kko.proj.data/cb.raw-decompressed.txt -d
-DIFF_ARGS=tests/in/kko.proj.data/cb.raw tests/in/kko.proj.data/cb.raw-decompressed.txt
-DU_ARGS=tests/in/kko.proj.data/cb.raw tests/out/cb.raw
+#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/cb.raw -o tests/out/cb.raw -w 512 -c -a
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/cb.raw -o tests/in/kko.proj.data/cb.raw-decompressed.txt -d
+#DIFF_ARGS=tests/in/kko.proj.data/cb.raw tests/in/kko.proj.data/cb.raw-decompressed.txt
+#DU_ARGS=tests/in/kko.proj.data/cb.raw tests/out/cb.raw
 
 #ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/kko.proj.data/nk01.raw -o tests/out/nk01.raw -w 512 -c -a
 #ARGUMENTS_DECOMPRESSOR := -i tests/out/nk01.raw -o tests/in/kko.proj.data/nk01.raw-decompressed.txt -d
 #DIFF_ARGS=tests/in/kko.proj.data/nk01.raw tests/in/kko.proj.data/nk01.raw-decompressed.txt
 #DU_ARGS=tests/in/kko.proj.data/nk01.raw tests/out/nk01.raw
 
-# --------------------------------------------------------
-# Targets
-# --------------------------------------------------------
-.PHONY: all clean run1 pack docker-build docker-run
-
-# Default target builds the executable
-all: $(EXECUTABLE)
-
-# Link final executable from object files
-$(EXECUTABLE): $(OBJECTS)
-	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
-
-# Compile each .cpp => .o in build/, generating .d files
-$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
-	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -I$(INCDIR) -I$(INCLUDES) -MMD -MP -c $< -o $@
-
-# Remove build artifacts
-clean:
-	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE) compile_commands.json valgrind.log
-
-# Example packaging target (adjust files as needed)
-pack:
-	zip -r 230614.zip $(SRCDIR)/*.cpp $(INCDIR)/*.hpp Makefile README.md
-
-# Docker targets
-docker-build:
-	docker compose build
-
-docker-run:
-	docker compose run --rm --service-ports kko fish
-
-# Include dependency files if they exist
--include $(DEPENDENCIES)
-
-
-.PHONY: clang-format
-clang-format:
-	clang-format -i $(SRCDIR)/*.cpp
-
-.PHONY: clang-tidy
-clang-tidy:
-	clang-tidy -p . -fix -fix-errors $(SRCDIR)/*.cpp
+#-------------------------------------------------------------------------------
+# Adaptive + preprocessing
+#-------------------------------------------------------------------------------
+#ARGUMENTS_COMPRESSOR_ADAPTIVE := -i tests/in/adaptive/t13-a.txt -o tests/out/t13-a.txt -w 4 -c -a -m
+#ARGUMENTS_DECOMPRESSOR := -i tests/out/t13-a.txt -o tests/in/adaptive/t13-a-decompressed.txt -d
+#DIFF_ARGS=tests/in/adaptive/t13-a.txt tests/in/adaptive/t13-a-decompressed.txt
+#DU_ARGS=tests/in/adaptive/t13-a.txt tests/out/t13-a.txt
 
 valgrind-compress: $(EXECUTABLE)
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose ./$(EXECUTABLE) $(ARGUMENTS_COMPRESSOR_STATIC)
@@ -255,5 +280,3 @@ diff:
 check-sizes:
 	du -sh zadani/kko.proj.data/info.txt tests/out/out.txt
 
-bear: ## Create compilation database
-	bear $(MAKE) all

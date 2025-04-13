@@ -104,6 +104,7 @@ done
 # KKO.PROJ.DATA STATIC + ADAPTIVE TESTS
 ########################################
 kko_files=(cb.raw cb2.raw df1h.raw df1hvx.raw df1v.raw shp.raw shp1.raw shp2.raw nk01.raw)
+#kko_files=(cb.raw cb2.raw df1h.raw)
 
 for file in "${kko_files[@]}"; do
     name=$(basename "$file" .raw)
@@ -116,11 +117,11 @@ for file in "${kko_files[@]}"; do
         "tests/in/kko.proj.data/${file}-decompressed.txt"
 
     # STATIC + PREPROCESS
-#    run_test "${file} (static + preprocess)" \
-#        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -m" \
-#        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d -m" \
-#        "tests/in/kko.proj.data/${file}" \
-#        "tests/in/kko.proj.data/${file}-decompressed.txt"
+    run_test "${file} (static + preprocess)" \
+        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -m" \
+        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d" \
+        "tests/in/kko.proj.data/${file}" \
+        "tests/in/kko.proj.data/${file}-decompressed.txt"
 
     # ADAPTIVE
     run_test "${file} (adaptive)" \
@@ -130,11 +131,11 @@ for file in "${kko_files[@]}"; do
         "tests/in/kko.proj.data/${file}-decompressed.txt"
 
     # ADAPTIVE + PREPROCESS
-#    run_test "${file} (adaptive + preprocess)" \
-#        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -a -m" \
-#        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d -m" \
-#        "tests/in/kko.proj.data/${file}" \
-#        "tests/in/kko.proj.data/${file}-decompressed.txt"
+    run_test "${file} (adaptive + preprocess)" \
+        "-i tests/in/kko.proj.data/${file} -o tests/out/${file} -w 512 -c -a -m" \
+        "-i tests/out/${file} -o tests/in/kko.proj.data/${file}-decompressed.txt -d" \
+        "tests/in/kko.proj.data/${file}" \
+        "tests/in/kko.proj.data/${file}-decompressed.txt"
 done
 
 ########################################

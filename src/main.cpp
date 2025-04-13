@@ -1,10 +1,19 @@
-//
-// Created by Zdeněk Lapeš on 26/03/2025.
-//
+/**
+ * @file lz_codec.cpp
+ * @brief Dictionary-based LZSS compression and decompression with optional delta encoding and adaptive scanning.
+ *
+ * This project provides a command-line tool for compressing and decompressing grayscale image data using a dictionary
+ * compression method (LZSS), with support for preprocessing (delta encoding) and adaptive image traversal.
+ *
+ * @author Zdeněk Lapeš
+ * @date 26/03/2025
+ */
 
 // TODO
-// - Fix adaptive
-// - Pre compression algo - maybe delta? or something else?
+// - test on merlin
+// - comment everything: headers for file, function class and everything else including parameters, describe each define
+// and each constant properly
+// - Finish docs
 
 //------------------------------------------------------------------------------
 // Includes
@@ -25,60 +34,71 @@
 // Constants
 //------------------------------------------------------------------------------
 static const std::size_t FLAG_SIZE_BITS = 1;
-
-static const std::size_t OFFSET_SIZE_BITS = 13;
-static const std::size_t LENGTH_SIZE_BITS = 5;
-// static const std::size_t LENGTH_SIZE_BITS = 6; // TODO
-
-// static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS);
-// static const std::size_t LOOKAHEAD_SIZE = (1 << LOOKAHEAD_SIZE_BITS);
-
-static const std::size_t MIN_MATCH_LENGTH = 3;
-static const std::size_t LITERAL_SIZE = MIN_MATCH_LENGTH - 1;
-static const std::size_t LITERAL_SIZE_BITS = LITERAL_SIZE * 8;
+static const std::size_t OFFSET_SIZE_BITS = 13; // 2^13 = 8192 bytes for search buffer
+static const std::size_t LENGTH_SIZE_BITS = 5;  // 2^5 = 32 bytes for look-ahead buffer
+static const std::size_t MIN_MATCH_LENGTH = 3;  // At least match 3 characters to do compression
 static const std::size_t CHARACTER_SIZE_BITS = 8;
-
-static const int BLOCK_W = 16;
-static const int BLOCK_H = 16;
-// static const int BLOCK_W = 8;
-// static const int BLOCK_H = 8;
-//  static const int BLOCK_W = 4;
-//  static const int BLOCK_H = 4;
-//  static const int BLOCK_W = 2;
-//  static const int BLOCK_H = 2;
+static const std::size_t ADAPTIVE_BLOCK_WIDTH = 16;
+static const std::size_t ADAPTIVE_BLOCK_HEIGHT = 16;
 
 //------------------------------------------------------------------------------
 // Macros
 //------------------------------------------------------------------------------
-#define DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR (0)
-#define DEBUG_BRUTE_FORCE (0)
-#define DEBUG_BRUTE_FORCE_RESULT (0)
-#define DEBUG_READ_HEADER (0)
-#define DEBUG_WRITE_HEADER (0)
-#define DEBUG_PRE_PROCESSING (0)
-#define INFO (0)
-#define VERBOSE (0)
-#define DEBUG (0)
+#define DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR (0) /// Enable detailed buffer shift logging.
+#define DEBUG_BRUTE_FORCE (0)                        /// Enable internal match search debug printouts.
+#define DEBUG_BRUTE_FORCE_RESULT (0)                 /// Enable final match result debug output.
+#define DEBUG_READ_HEADER (0)                        /// Enable header read debug logging.
+#define DEBUG_WRITE_HEADER (0)                       /// Enable header write debug logging.
+#define DEBUG_PRE_PROCESSING (0)                     /// Enable delta preprocessing debug logging.
+#define INFO (0)                                     /// Enable informational logs.
+#define VERBOSE (0)                                  /// Enable verbose mode.
+#define DEBUG (0)                                    /// Enable all debug logging.
+
+/**
+ * @brief Simple debug logging macro (prints formatted message if DEBUG is enabled).
+ */
 #define DEBUG_PRINT_LITE(fmt, ...)                                                                                     \
     do {                                                                                                               \
         if (DEBUG)                                                                                                     \
             fprintf(stderr, fmt, __VA_ARGS__);                                                                         \
     } while (0)
+
+/**
+ * @brief Debug logging macro with source file, line, and function context.
+ */
 #define DEBUG_PRINT(fmt, ...)                                                                                          \
     do {                                                                                                               \
         if (DEBUG)                                                                                                     \
             fprintf(stderr, "%s:%d:%s(): " fmt, __FILE__, __LINE__, __func__, __VA_ARGS__);                            \
     } while (0)
 
-// Preprocess buffer with delta encoding
+/**
+ * @brief Applies delta encoding on the input buffer in-place.
+ *
+ * Each byte is replaced by the difference between itself and the previous byte.
+ *
+ * @param[in,out] data Input data to be encoded (modified in place).
+ */
 void delta_encode(std::vector<uint8_t> &data) {
+    if (DEBUG_PRE_PROCESSING) {
+        std::cout << "Delta encoding" << std::endl;
+    }
     for (size_t i = data.size() - 1; i > 0; --i) {
         data[i] = static_cast<uint8_t>(data[i] - data[i - 1]);
     }
 }
 
-// Undo delta encoding during decompression
+/**
+ * @brief Decodes a buffer that was previously delta-encoded.
+ *
+ * Reconstructs original data by performing cumulative sum of the differences.
+ *
+ * @param[in,out] data Delta-encoded data (modified in place).
+ */
 void delta_decode(std::vector<uint8_t> &data) {
+    if (DEBUG_PRE_PROCESSING) {
+        std::cout << "Delta decoding" << std::endl;
+    }
     for (size_t i = 1; i < data.size(); ++i) {
         data[i] = static_cast<uint8_t>(data[i] + data[i - 1]);
     }
@@ -87,9 +107,9 @@ void delta_decode(std::vector<uint8_t> &data) {
 //------------------------------------------------------------------------------
 // Structs
 //------------------------------------------------------------------------------
-
 /**
- * Simple structure to store match information.
+ * @struct lz_match
+ * @brief Represents a found LZSS match in the sliding window.
  */
 struct lz_match {
     bool found = false;
@@ -97,49 +117,66 @@ struct lz_match {
     std::size_t length = 0;
 };
 
-std::size_t wrap_index(std::size_t i, std::size_t buffer_size);
-
-// Encoded structure
-struct token {
-    unsigned int flag : 1; // 1 bit: 0 indicates compressed token
-
-    // if flag == 1
-    unsigned int offset : 13; // 13 bits for the sliding-window offset
-    unsigned int length : 5;  // 5 bits for the match length
-
-    // if flag == 0
-    unsigned int literal : 16; // 16 bits to pack 2 literal characters (8 bits each)
-};
-typedef struct token token_t;
-
+/**
+ * @class CompressionHeader
+ * @brief Header structure to store metadata about compression.
+ */
 class CompressionHeader {
   public:
-    unsigned padding_bits_count : 3;
-    unsigned mode : 1;               // static=0 vs. adaptive=1
-    unsigned passage : 1;            // used only for adaptive: 0-horizontal, 1-vertical
-    unsigned is_file_compressed : 1; // 0-not compressed, 1-compressed
-    unsigned width : 16;             // width of the image
+    unsigned padding_bits_count : 3; ///< Number of padding bits in last byte.
+    unsigned mode : 1;               ///< 0 = static scan, 1 = adaptive.
+    unsigned passage : 1;            ///< 0 = horizontal pass, 1 = vertical.
+    unsigned is_file_compressed : 1; ///< 0 = raw copy, 1 = compressed.
+    unsigned is_preprocessed : 1;    ///< 0 = no delta, 1 = delta encoded.
+    unsigned width : 16;             ///< Image width in pixels.
 
+    /**
+     * @brief Check if static scanning mode.
+     * @return true if mode == 0
+     */
     bool get_is_static() const { return mode == 0; }
-    bool get_is_adaptive() const { return mode == 1; }
 
+    /**
+     * @brief Check if adaptive scanning mode.
+     * @return true if mode == 1
+     */
+    bool get_is_adaptive() const { return mode == 1; }
+    /**
+     * @brief Check if horizontal adaptive scan.
+     * @return true if passage == 0
+     */
     bool get_is_horizontal() const { return passage == 0; }
+
+    /**
+     * @brief Check if vertical adaptive scan.
+     * @return true if passage == 1
+     */
     bool get_is_vertical() const { return passage == 1; }
 
+    /**
+     * @brief Check if file is compressed.
+     * @return true if compressed
+     */
     bool get_is_compressed() const { return is_file_compressed == 1; }
 
-    int get_width() const { return width; }
-};
+    /**
+     * @brief Check if delta preprocessing was applied.
+     * @return true if preprocessed
+     */
+    bool get_is_preprocessed() const { return is_preprocessed == 1; }
 
-struct BlockHeader {
-    bool is_transposed;
+    /**
+     * @brief Get image width from header.
+     * @return width as integer
+     */
+    int get_width() const { return width; }
 };
 
 //------------------------------------------------------------------------------
 // Forward declarations
 //------------------------------------------------------------------------------
 
-class Buffer;
+struct Buffer;
 
 class Program;
 
@@ -148,42 +185,46 @@ class File;
 //------------------------------------------------------------------------------
 // Classes
 //------------------------------------------------------------------------------
-
+/**
+ * @class Program
+ * @brief Wrapper class that stores the entire program state (arguments, file handlers, buffers).
+ */
 class Program {
   public:
-    argparse::ArgumentParser *args = nullptr;
-    File *files = nullptr;
-    Buffer *buffers = nullptr;
+    argparse::ArgumentParser *args = nullptr; ///< Command-line argument parser
+    File *files = nullptr;                    ///< Pointer to file manager
+    Buffer *buffers = nullptr;                ///< Pointer to buffer system
 
-    // Constructor and Destructor.
+    /**
+     * @brief Constructor.
+     */
     Program() {}
 
+    /**
+     * @brief Destructor (cleans up parser).
+     */
     ~Program() {
         delete args; // TODO[fixme]: Segmentation fault
     }
 
-    // Parse command-line arguments.
+    /**
+     * @brief Parses arguments passed to the executable.
+     * @param argc Argument count
+     * @param argv Argument vector
+     */
     void parse_arguments(int argc, char **argv) {
-        // Allocate the parser on the heap.
         args = new argparse::ArgumentParser("lz_codec");
 
-        // Define mode arguments: compression (-c) and decompression (-d)
+        // Define arguments
         args->add_argument("-c").help("activate compression mode").default_value(false).implicit_value(true);
         args->add_argument("-d").help("activate decompression mode").default_value(false).implicit_value(true);
-
-        // Define additional flags: model (-m) and adaptive scanning (-a)
         args->add_argument("-m")
             .help("activate model for preprocessing input data")
             .default_value(false)
             .implicit_value(true);
         args->add_argument("-a").help("activate adaptive scanning mode").default_value(false).implicit_value(true);
-
-        // Define file arguments: input (-i) and output (-o) file names (both
-        // required)
         args->add_argument("-i").help("input file name").required();
         args->add_argument("-o").help("output file name").required();
-
-        // Define the image width argument (-w) for compression mode.
         args->add_argument("-w")
             .help("image width (required for compression; must be >= 1)")
             .scan<'i', int>()
@@ -206,83 +247,127 @@ class Program {
         }
     }
 
+    /**
+     * @brief Retrieves image width from arguments.
+     * @throws std::runtime_error if width <= 0
+     * @return image width
+     */
     int get_width() {
-        int width = args->get<int>("-w"); // fix type here
+        int width = args->get<int>("-w");
         if (width <= 0) {
             throw std::runtime_error("Width must be > 0 when using adaptive mode.");
         }
         return width;
     }
 
+    /**
+     * @brief Whether static (non-adaptive) compression is requested.
+     * @return true if -c and not -a
+     */
     bool is_static_compress() {
         const bool is_sequential = args->get<bool>("-c") && !args->get<bool>("-a");
         return is_sequential;
     }
 
+    /**
+     * @brief Whether preprocessing model (delta) is enabled.
+     * @return true if -m
+     */
+    bool is_preprocess() {
+        const bool is_preprocess = args->get<bool>("-m");
+        return is_preprocess;
+    }
+
+    /**
+     * @brief Whether adaptive compression mode is requested.
+     * @return true if -c and -a
+     */
     bool is_adaptive_compress() {
         const bool is_adaptive = args->get<bool>("-c") && args->get<bool>("-a");
         return is_adaptive;
     }
 
+    /**
+     * @brief Whether decompression mode is selected.
+     * @return true if -d
+     */
     bool is_decompress() {
         const bool is_decompress = args->get<bool>("-d");
         return is_decompress;
     }
 
+    /**
+     * @brief Print arguments to stdout (only if verbose).
+     */
     void print_arguments() {
-        if (this->is_verbose()) {
-            std::cout << "Program arguments:" << std::endl;
-            std::cout << "-c | compress: " << args->get<bool>("-c") << std::endl;
-            std::cout << "-d | pre_decompress: " << args->get<bool>("-d") << std::endl;
-            std::cout << "-m | model: " << args->get<bool>("-m") << std::endl;
-            std::cout << "-a | adaptive scanning: " << args->get<bool>("-a") << std::endl;
-            std::cout << "-i | input file: " << args->get<std::string>("-i") << std::endl;
-            std::cout << "-o | output file: " << args->get<std::string>("-o") << std::endl;
-            std::cout << "-w | width: " << args->get<int>("-w") << std::endl;
-            std::cout << "-v | verbose: " << args->get<bool>("-v") << std::endl;
-        }
+        std::cout << "Program arguments:" << std::endl;
+        std::cout << "-c | compress: " << args->get<bool>("-c") << std::endl;
+        std::cout << "-d | pre_decompress: " << args->get<bool>("-d") << std::endl;
+        std::cout << "-m | model: " << args->get<bool>("-m") << std::endl;
+        std::cout << "-a | adaptive scanning: " << args->get<bool>("-a") << std::endl;
+        std::cout << "-i | input file: " << args->get<std::string>("-i") << std::endl;
+        std::cout << "-o | output file: " << args->get<std::string>("-o") << std::endl;
+        std::cout << "-w | width: " << args->get<int>("-w") << std::endl;
     }
-
-    bool is_verbose() { return args->get<bool>("-v"); }
 };
 
 /**
- * Buffer
+ * @struct Buffer
+ * @brief Holds the sliding window and lookahead buffer for LZSS compression.
+ *
+ * This structure is used during compression to store the current sliding window
+ * and the lookahead buffer. It provides debug utilities and a brute-force matching method.
  */
 struct Buffer {
-    std::deque<uint8_t> window;
-    std::deque<uint8_t> lookahead;
+    std::deque<uint8_t> window;                               ///< Sliding window for LZSS matching.
+    std::deque<uint8_t> lookahead;                            ///< Lookahead buffer for incoming characters.
+    std::size_t max_window_size = (1 << OFFSET_SIZE_BITS);    ///< Maximum size of the sliding window.
+    std::size_t max_lookahead_size = (1 << LENGTH_SIZE_BITS); ///< Maximum size of the lookahead buffer.
 
-    std::size_t max_window_size = (1 << OFFSET_SIZE_BITS);
-    std::size_t max_lookahead_size = (1 << LENGTH_SIZE_BITS);
-
+    /**
+     * @brief Default constructor. Initializes sizes and optionally prints debug info.
+     */
     Buffer() {
         if (DEBUG) {
             DEBUG_PRINT_LITE("max_window_size: %zu | max_lookahead_size: %zu\n", max_window_size, max_lookahead_size);
         }
-        // NOTE: We do nto need to resize buffers
-        //        window.resize(max_window_size);
-        //        lookahead.resize(max_lookahead_size);
     }
 
+    /**
+     * @brief Destructor.
+     */
     ~Buffer() {}
 
+    /**
+     * @brief Prints both window and lookahead buffer for debugging.
+     * @param msg Message to prefix the debug output with.
+     */
     void debug_print_buffers(const std::string &msg) {
         std::cout << "----------------" << std::endl << msg << std::endl;
         this->debug_print_window();
         this->debug_print_lookahead();
     }
 
+    /**
+     * @brief Prints the contents of the window buffer.
+     */
     void debug_print_window() {
         std::string output(window.begin(), window.end());
         std::cout << "Window (size: " << window.size() << "):\n" << output << std::endl;
     }
 
+    /**
+     * @brief Prints the contents of the lookahead buffer.
+     */
     void debug_print_lookahead() {
         std::string output(lookahead.begin(), lookahead.end());
         std::cout << "Lookahead (size: " << lookahead.size() << "):\n" << output << std::endl;
     }
 
+    /**
+     * @brief Finds the longest match between the window and the lookahead buffer.
+     * @return A lz_match struct containing match information (offset, length, found).
+     */
     lz_match brute_force_search() {
         lz_match match = {false, 0, 0};
 
@@ -337,11 +422,72 @@ struct Buffer {
     }
 };
 
+/**
+ * @class File
+ * @brief Manages input/output file reading and writing during compression/decompression.
+ *
+ * Provides functionality for block-based reading, writing, transposition, delta preprocessing,
+ * and handling adaptive compression blocks.
+ */
 class File {
   public:
-    // Returns a pointer to a dynamically allocated char array containing the file's data.
-    // The file size is returned via the out parameter 'size'.
-    std::tuple<char *, std::size_t> readBinaryFileToCharArray(const std::string &filename) {
+    /**
+     * @brief Constructor. Loads input file and prepares output stream.
+     * @param in_filepath Path to input file.
+     * @param out_filepath Path to output file.
+     * @param program Reference to the current program configuration.
+     */
+    File(std::string in_filepath, std::string out_filepath, Program &program) : program(program) {
+        // Check if file exists
+        if (!std::filesystem::exists(in_filepath)) {
+            throw std::runtime_error("Input file does not exist");
+        }
+        out = std::ofstream(out_filepath, std::ios::binary);
+        auto [buffer, buffer_size] = read_binary_file_to_char_array(in_filepath);
+        this->buffer = reinterpret_cast<uint8_t *>(buffer);
+        this->buffer_size = buffer_size;
+
+        const bool is_empty_file = buffer_size == 0;
+        if (is_empty_file) {
+            this->EOF_reached = true;
+        }
+
+        // Print each byte in its bit representation.
+        if (DEBUG) {
+            std::cout << "Buffer bytes in bits (buffer size: " << buffer_size << "):" << std::endl;
+            for (std::size_t i = 0; i < buffer_size; i++) {
+                // Create a bitset representing the 8 bits of the byte.
+                std::bitset<8> bits(static_cast<unsigned char>(buffer[i]));
+                // Print the byte index, its character value (if printable) and the bits.
+                std::cout << "buffer[" << i << "]: " << bits << std::endl;
+            }
+        }
+    }
+
+    /**
+     * @brief Destructor. Closes file streams and frees buffer memory.
+     */
+    ~File() {
+        // Explicitly flush and close the output stream.
+        if (out.is_open()) {
+            out.flush();
+            out.close();
+        }
+        // Close the input stream.
+        //        if (in.is_open()) {
+        //            // (ifstream typically does not buffer output, but we still close it)
+        //            in.close();
+        //        }
+
+        delete[] buffer;
+    }
+
+    /**
+     * @brief Reads a binary file and returns a character array with its contents.
+     * @param filename Path to the input file.
+     * @return Tuple with pointer to data and its size.
+     */
+    std::tuple<char *, std::size_t> read_binary_file_to_char_array(const std::string &filename) {
         // Open the file in binary mode.
         std::ifstream file(filename, std::ios::binary);
         if (!file) {
@@ -367,54 +513,12 @@ class File {
         return (std::make_tuple(buffer, size));
     }
 
-    File(std::string in_filepath, std::string out_filepath, Program &program) : program(program) {
-        const auto width = program.args->get<int>("-w");
-
-        // Check if file exists
-        if (!std::filesystem::exists(in_filepath)) {
-            throw std::runtime_error("Input file does not exist");
-        }
-        out = std::ofstream(out_filepath, std::ios::binary);
-        auto [buffer, buffer_size] = readBinaryFileToCharArray(in_filepath);
-        this->buffer = buffer;
-        this->buffer_size = buffer_size;
-
-        const bool is_empty_file = buffer_size == 0;
-        if (is_empty_file) {
-            this->EOF_reached = true;
-        }
-
-        // Print each byte in its bit representation.
-        if (DEBUG) {
-            std::cout << "Buffer bytes in bits (buffer size: " << buffer_size << "):" << std::endl;
-            for (std::size_t i = 0; i < buffer_size; i++) {
-                // Create a bitset representing the 8 bits of the byte.
-                std::bitset<8> bits(static_cast<unsigned char>(buffer[i]));
-                // Print the byte index, its character value (if printable) and the bits.
-                std::cout << "buffer[" << i << "]: " << bits << std::endl;
-            }
-        }
-    }
-
-    ~File() {
-        // Explicitly flush and close the output stream.
-        if (out.is_open()) {
-            out.flush();
-            out.close();
-        }
-        // Close the input stream.
-        //        if (in.is_open()) {
-        //            // (ifstream typically does not buffer output, but we still close it)
-        //            in.close();
-        //        }
-
-        fclose(in);
-
-        delete[] buffer;
-    }
-
-    void prepare_adaptive_blocks(int image_width) {
-        const int block_size = BLOCK_W * BLOCK_H;
+    /**
+     * @brief Prepares blocks for adaptive compression, including transposition and optional delta encoding.
+     * @param image_width Width of the image in pixels.
+     */
+    void prepare_adaptive_blocks_for_compression(int image_width) {
+        const int block_size = ADAPTIVE_BLOCK_WIDTH * ADAPTIVE_BLOCK_HEIGHT;
 
         if (DEBUG) {
             DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | buffer_size: %zu\n", image_width,
@@ -432,6 +536,12 @@ class File {
                 if (read_vertically) {
                     block = transpose_block(block);
                 }
+
+                // Delta encode if preprocessing is enabled
+                if (program.is_preprocess()) {
+                    delta_encode(block);
+                }
+
                 adaptive_blocks.push_back(block);
                 block.clear();
             }
@@ -442,6 +552,11 @@ class File {
             if (read_vertically) {
                 block = transpose_block(block);
             }
+
+            if (program.is_preprocess()) {
+                delta_encode(block);
+            }
+
             adaptive_blocks.push_back(block);
         }
 
@@ -457,8 +572,12 @@ class File {
         }
     }
 
-    void prepare_adaptive_blocks_use_written_data(int image_width) {
-        const int block_size = BLOCK_W * BLOCK_H;
+    /**
+     * @brief Prepares blocks for adaptive compression, including transposition and optional delta encoding.
+     * @param image_width Width of the image in pixels.
+     */
+    void prepare_adaptive_blocks_for_decompression(int image_width, CompressionHeader &header) {
+        const int block_size = ADAPTIVE_BLOCK_WIDTH * ADAPTIVE_BLOCK_HEIGHT;
 
         DEBUG_PRINT_LITE("Preparing adaptive blocks from written data - image width: %d | total bytes: %zu\n",
                          image_width, written_data.size());
@@ -473,16 +592,27 @@ class File {
                 if (read_vertically) {
                     block = transpose_block(block);
                 }
+
+                // Decode if preprocessing was used
+                if (header.get_is_preprocessed()) {
+                    delta_decode(block);
+                }
+
                 adaptive_blocks.push_back(block);
                 block.clear();
             }
         }
 
-        // Push final partial block if any
+        // Handle last partial block
         if (!block.empty()) {
             if (read_vertically) {
                 block = transpose_block(block);
             }
+
+            if (program.is_preprocess()) {
+                delta_decode(block);
+            }
+
             adaptive_blocks.push_back(block);
         }
 
@@ -491,30 +621,25 @@ class File {
         }
     }
 
+    /**
+     * @brief Transposes a single image block (e.g., from row-major to column-major).
+     * @param block Block of pixels to transpose.
+     * @return Transposed block.
+     */
     std::vector<uint8_t> transpose_block(const std::vector<uint8_t> &block) {
-        std::vector<uint8_t> result(BLOCK_H * BLOCK_W, 0);
-        for (int y = 0; y < BLOCK_H; ++y) {
-            for (int x = 0; x < BLOCK_W; ++x) {
-                result[x * BLOCK_H + y] = block[y * BLOCK_W + x];
+        std::vector<uint8_t> result(ADAPTIVE_BLOCK_HEIGHT * ADAPTIVE_BLOCK_WIDTH, 0);
+        for (std::size_t y = 0; y < ADAPTIVE_BLOCK_HEIGHT; ++y) {
+            for (std::size_t x = 0; x < ADAPTIVE_BLOCK_WIDTH; ++x) {
+                result[x * ADAPTIVE_BLOCK_HEIGHT + y] = block[y * ADAPTIVE_BLOCK_WIDTH + x];
             }
         }
         return result;
     }
 
-    //    char get_char_adaptive(const bool vertically=false) {
-    //        if (current_block_index >= adaptive_blocks.size()) {
-    //            EOF_reached = true;
-    //            return 0;
-    //        }
-    //        std::vector<char> &block = adaptive_blocks[current_block_index];
-    //        if (current_block_pos >= block.size()) {
-    //            current_block_index++;
-    //            current_block_pos = 0;
-    //            return get_char();
-    //        }
-    //        return block[current_block_pos++];
-    //    }
-
+    /**
+     * @brief Reads next character from adaptive block, initializing if necessary.
+     * @return Next character.
+     */
     char get_char_adaptive() {
         // Lazy initialization of adaptive blocks if they haven't been prepared
         if (adaptive_blocks.empty()) {
@@ -522,7 +647,7 @@ class File {
             if (image_width <= 0) {
                 throw std::runtime_error("Image width (-w) must be set and > 0 for adaptive reading.");
             }
-            prepare_adaptive_blocks(image_width);
+            prepare_adaptive_blocks_for_compression(image_width);
         }
 
         std::vector<uint8_t> &block = adaptive_blocks[current_block_index];
@@ -543,6 +668,10 @@ class File {
         return _char;
     }
 
+    /**
+     * @brief Reads next character sequentially from buffer.
+     * @return Next character.
+     */
     char get_char_sequential() {
         current_char = buffer[buffer_head];
         buffer_head++;
@@ -552,6 +681,10 @@ class File {
         return current_char;
     }
 
+    /**
+     * @brief Reads the next character depending on compression mode.
+     * @return Next character.
+     */
     char get_char() {
         if (program.is_static_compress()) {
             const char _char = get_char_sequential();
@@ -569,6 +702,9 @@ class File {
         return _char;
     }
 
+    /**
+     * @brief Resets internal pointers to simulate beginning of file read.
+     */
     void seek_to_beginning_of_file() {
         EOF_reached = false;
         buffer_head = 0;
@@ -578,52 +714,45 @@ class File {
         adaptive_blocks.clear();
     }
 
-    bool write_char(uint8_t in_byte) {
+    /**
+     * @brief Writes a single byte to internal buffer (not immediately to file).
+     * @param in_byte Byte to write.
+     */
+    void write_char(uint8_t in_byte) {
         written_data.push_back(in_byte); // store before writing to file
-
-        //        if (!this->out.is_open()) {
-        //            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
-        //            return false;
-        //        }
-        //
-        //        this->out.put(static_cast<char>(in_byte));
-        //        this->out.flush();
-        //
-        //        if (this->out.fail()) {
-        //            DEBUG_PRINT_LITE("Error writing byte: %c\n", in_byte);
-        //            return false;
-        //        }
-        //
-        //        return true;
     }
 
-    bool write_char_to_written_data(uint8_t in_byte) {
-        written_data.push_back(in_byte); // store before writing to file
-        return true;
-    }
 
-    void write_adaptive_blocks_to_file(const int width) {
+    /**
+     * @brief Writes all adaptive blocks into the output file.
+     * @param width Width of the image.
+     */
+    void write_decompressed_file(const int width) {
         if (!out.is_open()) {
             throw std::runtime_error("Output stream is not open.");
         }
 
-        const int blocks_per_row = width / BLOCK_W;
+        const int blocks_per_row = width / ADAPTIVE_BLOCK_WIDTH;
         const int total_blocks = adaptive_blocks.size();
         const int blocks_per_col = total_blocks / blocks_per_row;
 
         DEBUG_PRINT_LITE("Writing; block_per_row: %d | block_per_col: %d | total_blocks: %d\n", blocks_per_row,
                          blocks_per_col, total_blocks);
 
-        for (const auto &block : adaptive_blocks) {
+        for (auto block : adaptive_blocks) {
+
             for (const auto &char_in_block : block) {
-                out.put(char_in_block);
+                out.put(static_cast<char>(char_in_block));
             }
         }
 
         out.flush();
     }
 
-    void flush_written_data_to_file() {
+    /**
+     * @brief Flushes written_data to the output file for non-compressed data.
+     */
+    void flush_to_file_not_compressed() {
         if (!out.is_open()) {
             throw std::runtime_error("Output stream is not open.");
         }
@@ -634,6 +763,11 @@ class File {
 
         out.flush(); // ensure all data is written
     }
+
+    /**
+     * @brief Validates if the image dimensions are compatible with block sizes.
+     * @throws std::runtime_error if dimensions are invalid.
+     */
     void is_image_format_ok() {
         const int width = program.args->get<int>("-w");
 
@@ -641,7 +775,7 @@ class File {
             throw std::runtime_error("Invalid image width");
         }
 
-        if (width % BLOCK_W != 0) {
+        if (width % ADAPTIVE_BLOCK_WIDTH != 0) {
             throw std::runtime_error("Image width is not divisible by block width");
         }
 
@@ -652,35 +786,46 @@ class File {
                                      " is not divisible by image width: " + std::to_string(width));
         }
 
-        if (height % BLOCK_H != 0) {
+        if (height % ADAPTIVE_BLOCK_HEIGHT != 0) {
             throw std::runtime_error("Image height is not divisible by block height");
         }
     }
 
-    // Retrieve input/output filenames from Program
-    //    std::ifstream in;
-    Program &program;
-    FILE *in;
-    std::ofstream out;
-    uint8_t current_char = '\0';
-    bool EOF_reached = false; // track if we hit EOF
-    char *buffer = nullptr;
-    std::size_t buffer_size;
-    std::vector<BlockHeader> block_headers;
-    std::vector<std::vector<uint8_t>> adaptive_blocks; // blocks stored row-wise
-    unsigned long long int buffer_head = 0;
-    unsigned long long int current_block_index = 0;
-    unsigned long long int current_block_pos = 0;
-    unsigned long long int block_size = 16 * 16;
-    bool read_vertically = false;
-    std::vector<uint8_t> written_data; // stores written bytes for later access/debug
+    Program &program;                                  ///< Reference to associated program context.
+    std::ofstream out;                                 ///< Output file stream.
+    uint8_t current_char = '\0';                       ///< Most recently read character.
+    bool EOF_reached = false;                          ///< Flag indicating if EOF was reached.
+    uint8_t *buffer = nullptr;                         ///< Raw buffer from input file.
+    std::size_t buffer_size;                           ///< Size of input buffer.
+    std::vector<std::vector<uint8_t>> adaptive_blocks; ///< Image blocks (used in adaptive mode).
+    unsigned long long int buffer_head = 0;            ///< Pointer to current byte in input.
+    unsigned long long int current_block_index = 0;    ///< Current adaptive block index.
+    unsigned long long int current_block_pos = 0;      ///< Position in current adaptive block.
+    unsigned long long int block_size = 16 * 16;       ///< Block size (number of pixels).
+    bool read_vertically = false;                      ///< Whether vertical transposition is enabled.
+    std::vector<uint8_t> written_data;                 ///< Buffer storing output before writing.
 };
 
+/**
+ * @class BitsetWriter
+ * @brief Handles writing individual bits to a byte buffer and flushing to file.
+ *
+ * This class accumulates bits into a buffer (bitset<8>) and flushes them as bytes.
+ * It also constructs and writes a compression header based on program parameters.
+ */
 class BitsetWriter {
   public:
+    /**
+     * @brief Constructs a BitsetWriter using a reference to the program.
+     * @param program The Program object managing global state.
+     */
     BitsetWriter(Program &program) : program(program), bits_filled(0), buffer(0), final_padding_bits(0) {}
 
-    // Write the lower 'count' bits from 'bits' (starting from MSB)
+    /**
+     * @brief Writes `count` least significant bits from `bits` to the buffer.
+     * @param bits The input bits as a 32-bit integer.
+     * @param count The number of bits to write from MSB to LSB.
+     */
     void write_bits(uint32_t bits, uint32_t count) {
         for (int i = count - 1; i >= 0; --i) {
             // Get the i-th bit (from MSB side)
@@ -695,9 +840,15 @@ class BitsetWriter {
         }
     }
 
+    /**
+     * @brief Retrieves the flushed byte stream.
+     * @return Reference to vector of flushed bytes.
+     */
     const std::vector<uint8_t> &get_flushed_bytes() const { return flushed_bytes; }
 
-    // Flush any remaining bits by padding with 0s.
+    /**
+     * @brief Flushes remaining bits in the buffer by padding with zero bits.
+     */
     void flush() {
         DEBUG_PRINT_LITE("!!!!!!!!!!!!!!!!!!!!!!!Flushing!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!%c", '\n');
         if (bits_filled > 0) {
@@ -706,9 +857,20 @@ class BitsetWriter {
         }
     }
 
-    // Write the header and all stored flushed bytes to file.
-    void write_all_to_file(const bool is_vertical = false) {
+    /**
+     * @brief Finalizes the buffer and writes the header + data to file.
+     * @param is_vertical Whether data is read vertically (used in header).
+     */
+    void flush_to_file_after_compression(const bool is_vertical = false) {
+        if (VERBOSE) {
+            std::cout << "Flushing buffer after compression" << std::endl;
+        }
+
         this->flush(); // Add padding bits
+
+        if (VERBOSE) {
+            std::cout << "1" << std::endl;
+        }
 
         // Create and populate the header.
         CompressionHeader header;
@@ -717,17 +879,29 @@ class BitsetWriter {
         header.passage = is_vertical;
         header.is_file_compressed = program.files->buffer_size > flushed_bytes.size();
         //        header.is_file_compressed = true;
-        //        header.is_file_compressed = false;
+        //                header.is_file_compressed = false;
+        header.is_preprocessed = program.args->get<bool>("-m");
+        //        header.is_preprocessed = true;
+        //        header.is_preprocessed = false;
         const auto width = program.get_width();
         header.width = static_cast<unsigned>(width);
+
+        if (VERBOSE) {
+            std::cout << "2" << std::endl;
+        }
 
         // Write the header as one byte. We pack header in the lower 3 bits.
         // We assume that header occupies the lower 3 bits and the upper bits are 0.
         // Split header into 3 bytes
         uint8_t byte1 = (header.padding_bits_count & 0b00000111) | ((header.mode & 0b1) << 3) |
-                        ((header.passage & 0b1) << 4) | ((header.is_file_compressed & 0b1) << 5);
+                        ((header.passage & 0b1) << 4) | ((header.is_file_compressed & 0b1) << 5) |
+                        ((header.is_preprocessed & 0b1) << 6);
         uint8_t byte2 = static_cast<uint8_t>((header.width >> 0) & 0xFF); // Lower 8 bits of width
         uint8_t byte3 = static_cast<uint8_t>((header.width >> 8) & 0xFF); // Upper 8 bits of width
+
+        if (VERBOSE) {
+            std::cout << "3" << std::endl;
+        }
 
         if (DEBUG_WRITE_HEADER) {
             std::cout << "Padding: " << header.padding_bits_count << " | mode: " << bool(header.mode)
@@ -743,10 +917,18 @@ class BitsetWriter {
         // BEFORE clean
         program.files->written_data.clear();
 
+        if (VERBOSE) {
+            std::cout << "4" << std::endl;
+        }
+
         // Write 3 header bytes to file
         program.files->write_char(byte1);
         program.files->write_char(byte2);
         program.files->write_char(byte3);
+
+        if (VERBOSE) {
+            std::cout << "5" << std::endl;
+        }
 
         // Write each flushed byte.
         if (header.get_is_compressed()) {
@@ -763,20 +945,31 @@ class BitsetWriter {
             if (VERBOSE) {
                 std::cout << "Not compressed" << std::endl;
             }
-            for (std::size_t i = 0; i < program.files->buffer_size; i++) {
-                if (DEBUG) {
-                    std::cout << "program.files->buffer[" << i << "]: " << std::bitset<8>(program.files->buffer[i])
-                              << std::endl;
-                }
-                const auto _char = static_cast<char>(program.files->buffer[i]);
-                program.files->write_char(_char);
+
+            std::ifstream in_file(program.args->get<std::string>("-i"), std::ios::binary);
+            if (!in_file.is_open()) {
+                throw std::runtime_error("Failed to reopen input file for uncompressed copy.");
             }
+
+            char byte;
+            while (in_file.get(byte)) {
+                program.files->write_char(static_cast<uint8_t>(byte));
+            }
+
+            in_file.close();
         }
-        program.files->flush_written_data_to_file();
+        program.files->flush_to_file_not_compressed();
+
+        if (VERBOSE) {
+            std::cout << "END Flushing buffer after compression" << std::endl;
+        }
     }
 
   private:
-    // Flush the current buffer. If 'is_final' is true, record the padding bits.
+    /**
+     * @brief Flushes current buffer to a byte and stores it in flushed_bytes.
+     * @param is_final If true, padding bit count is calculated and stored.
+     */
     void flush_byte(bool is_final) {
         if (is_final) {
             final_padding_bits = 8 - bits_filled;
@@ -804,19 +997,34 @@ class BitsetWriter {
         buffer.reset();
     }
 
-    Program &program;
-    int bits_filled;                    // number of bits currently in the buffer (0 to 7)
-    std::bitset<8> buffer;              // our 8-bit buffer
-    std::vector<uint8_t> flushed_bytes; // stores all flushed bytes
-    int final_padding_bits;             // how many bits were padded in the final byte
+    Program &program;                   ///< Reference to Program context for file access and arguments.
+    int bits_filled;                    ///< Current number of bits written to buffer (0–7).
+    std::bitset<8> buffer;              ///< 8-bit buffer storing current byte being built.
+    std::vector<uint8_t> flushed_bytes; ///< Flushed full bytes written from buffer.
+    int final_padding_bits;             ///< Number of zero bits padded in the final flushed byte.
 };
 
-// Add a getter to expose remaining bits, if desired.
+/**
+ * @class BitsetReader
+ * @brief Reads bits sequentially from a byte stream using internal bit buffering.
+ *
+ * This class reads bytes from file (via Program), extracts bits from MSB to LSB,
+ * and reconstructs values of requested bit-width. It is used for decompression.
+ */
 class BitsetReader {
   public:
+    /**
+     * @brief Constructs a BitsetReader.
+     * @param program Reference to global Program context.
+     * @param header Compression header, used for interpreting padding bits.
+     */
     BitsetReader(Program &program, CompressionHeader &header) : program(program), bits_remaining(0), header(header) {}
 
-    // Reads 'count' bits (from MSB side) and returns them as an unsigned integer.
+    /**
+     * @brief Reads `count` bits from the stream (MSB first).
+     * @param count Number of bits to read.
+     * @return The bits interpreted as an unsigned integer.
+     */
     uint32_t read_bits(uint32_t count) {
         //        File *file = program.files;
         //        std::cout << "buffer[" << file->buffer_head << "]: " <<
@@ -856,6 +1064,10 @@ class BitsetReader {
         return result;
     }
 
+    /**
+     * @brief Checks if reader is exactly at EOF (including accounting for padding bits).
+     * @return True if EOF is reached and no meaningful bits remain.
+     */
     bool is_at_the_end_of_file() const {
         const auto is_at_the_end = program.files->buffer_head >= program.files->buffer_size;
         const auto is_at_the_end_exact_remaining_bits = header.padding_bits_count == bits_remaining;
@@ -865,12 +1077,20 @@ class BitsetReader {
     }
 
   private:
-    Program &program;
-    std::bitset<8> buffer;
-    int bits_remaining;
-    CompressionHeader &header;
+    Program &program;          ///< Reference to Program for reading characters.
+    std::bitset<8> buffer;     ///< 8-bit buffer holding current byte of bits.
+    int bits_remaining;        ///< Number of bits remaining unread in `buffer`.
+    CompressionHeader &header; ///< Reference to the compression header.
 };
 
+/**
+ * @brief Initializes the lookahead buffer with characters from the input file.
+ *
+ * Fills the lookahead buffer up to its maximum capacity, stopping early if the end
+ * of the file is reached.
+ *
+ * @param program Reference to the global Program instance.
+ */
 void init_lookahead_buffer(Program &program) {
     Buffer *buffers = program.buffers;
 
@@ -884,10 +1104,24 @@ void init_lookahead_buffer(Program &program) {
         buffers->debug_print_buffers("After initialization");
     }
 }
-//------------------------------------------------------------------------------
-// Functions
-//------------------------------------------------------------------------------
+
+/**
+ * @brief Initializes the lookahead buffer with characters from the input file.
+ *
+ * Fills the lookahead buffer up to its maximum capacity, stopping early if the end
+ * of the file is reached.
+ *
+ * @param program Reference to the global Program instance.
+ */
 namespace StaticProcessor {
+/**
+ * @brief Shifts characters between buffers and reads the next character from the file.
+ *
+ * Moves the front character of the lookahead buffer to the sliding window,
+ * pops the oldest window character if necessary, and fetches a new character from file.
+ *
+ * @param program Reference to the global Program instance.
+ */
 void shift_buffers_and_read_new_char(Program &program) {
     auto *buffers = program.buffers;
     auto *files = program.files;
@@ -918,6 +1152,16 @@ void shift_buffers_and_read_new_char(Program &program) {
     //    }
 }
 
+/**
+ * @brief Writes compressed (match) token using BitsetWriter and updates buffers.
+ *
+ * Writes a flag bit, match offset, and match length into the bitstream.
+ * Then updates buffers based on the match length.
+ *
+ * @param program Reference to the global Program instance.
+ * @param match The LZ match data (offset, length).
+ * @param bitset_writer Writer to emit compressed bits into the output stream.
+ */
 void compress_compressed(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
     bitset_writer.write_bits(1, FLAG_SIZE_BITS);
     bitset_writer.write_bits(match.offset, OFFSET_SIZE_BITS);
@@ -929,7 +1173,16 @@ void compress_compressed(Program &program, lz_match &match, BitsetWriter &bitset
     }
 }
 
-void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_writer) {
+/**
+ * @brief Writes literal characters as uncompressed tokens into the output.
+ *
+ * Emits two characters as literal tokens with a flag and 8-bit encoding each.
+ * Advances buffers accordingly.
+ *
+ * @param program Reference to the global Program instance.
+ * @param bitset_writer Writer to emit bits.
+ */
+void compress_literal(Program &program, BitsetWriter &bitset_writer) {
     Buffer *buffers = program.buffers;
 
     //    if (DEBUG) {
@@ -973,15 +1226,25 @@ void compress_literal(Program &program, lz_match &match, BitsetWriter &bitset_wr
     //     }
 }
 
+/**
+ * @brief Performs full LZSS compression in static mode.
+ *
+ * Initializes buffers, processes input with matching or literal encoding,
+ * and flushes output data and header using BitsetWriter.
+ *
+ * @param program Reference to the global Program instance.
+ */
 void compress(Program &program) {
     //    DEBUG_PRINT("%c", '\n');
     Buffer *buffers = program.buffers;
+    File *files = program.files;
     BitsetWriter bitset_writer(program);
 
-    if (program.args->get<bool>("-m")) {
-        std::vector<uint8_t> buffer_vec(program.files->buffer, program.files->buffer + program.files->buffer_size);
-        delta_encode(buffer_vec);
-        std::memcpy(program.files->buffer, buffer_vec.data(), program.files->buffer_size);
+    if (program.is_preprocess() && program.is_static_compress()) {
+        const auto data = new std::vector<uint8_t>(files->buffer, files->buffer + files->buffer_size);
+        delta_encode(*data);
+        memcpy(files->buffer, data->data(), files->buffer_size);
+        delete data;
     }
 
     init_lookahead_buffer(program);
@@ -999,7 +1262,7 @@ void compress(Program &program) {
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, bitset_writer);
         } else {
-            StaticProcessor::compress_literal(program, match, bitset_writer);
+            StaticProcessor::compress_literal(program, bitset_writer);
         }
 
         if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
@@ -1011,10 +1274,20 @@ void compress(Program &program) {
     // Process end
     //    process_end(program, bitset_writer);
 
-    bitset_writer.write_all_to_file();
+    bitset_writer.flush_to_file_after_compression();
 }
 
-void decompress_compressed(Program &program, BitsetReader &bitset_reader, std::size_t offset, std::size_t length) {
+/**
+ * @brief Handles decompression of a compressed match sequence.
+ *
+ * Reconstructs the sequence using the given offset and length by copying from
+ * the sliding window buffer. Appends results to both output and window buffer.
+ *
+ * @param program Reference to the global Program instance.
+ * @param offset Offset of the matched string from the current position.
+ * @param length Length of the matched sequence.
+ */
+void decompress_compressed(Program &program, std::size_t offset, std::size_t length) {
     //    DEBUG_PRINT("Start%c", '\n');
     Buffer *buffers = program.buffers;
 
@@ -1049,6 +1322,15 @@ void decompress_compressed(Program &program, BitsetReader &bitset_reader, std::s
     }
 }
 
+/**
+ * @brief Decompresses a single literal character from the input stream.
+ *
+ * Reads one 8-bit character, writes it to output, and appends it to the window.
+ *
+ * @param program Reference to the global Program instance.
+ * @param bitset_reader Reader to fetch bits from the input stream.
+ * @return The decoded character.
+ */
 char decompress_character(Program &program, BitsetReader &bitset_reader) {
     Buffer *buffers = program.buffers;
 
@@ -1069,7 +1351,15 @@ char decompress_character(Program &program, BitsetReader &bitset_reader) {
     return char1;
 }
 
-// --- Changed code in decompress ---
+/**
+ * @brief Performs full decompression of a static-mode LZSS encoded stream.
+ *
+ * Reads tokens using BitsetReader, processes either compressed or literal
+ * sequences, and reconstructs the original file. Handles optional preprocessing.
+ *
+ * @param program Reference to the global Program instance.
+ * @param header CompressionHeader object containing encoding metadata.
+ */
 void decompress(Program &program, CompressionHeader &header) {
     if (DEBUG) {
         DEBUG_PRINT_LITE("Decompress static%c", '\n');
@@ -1105,12 +1395,12 @@ void decompress(Program &program, CompressionHeader &header) {
                           << " | tmp_i: " << tmp_i << std::endl;
             }
 
-            decompress_compressed(program, bitset_reader, offset, length);
+            decompress_compressed(program, offset, length);
         } else { // Literal token.
                  //            if (DEBUG) {
                  //            DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
                  //            }
-            char char1 = decompress_character(program, bitset_reader);
+            decompress_character(program, bitset_reader);
             const bool should_stop = bitset_reader.is_at_the_end_of_file();
             if (should_stop) {
                 if (INFO) {
@@ -1119,19 +1409,40 @@ void decompress(Program &program, CompressionHeader &header) {
                 bitset_reader.is_at_the_end_of_file();
                 break;
             }
-            char char2 = decompress_character(program, bitset_reader);
+            decompress_character(program, bitset_reader);
         }
     }
 
-    if (program.args->get<bool>("-m")) {
+    if (DEBUG) {
+        std::cout << "Width: " << header.width << std::endl;
+    }
+
+    if (header.get_is_preprocessed()) {
         delta_decode(program.files->written_data);
     }
-    program.files->flush_written_data_to_file();
+
+    program.files->flush_to_file_not_compressed();
 }
-}; // namespace StaticProcessor
+} // namespace StaticProcessor
+
+/**
+ * @namespace AdaptiveProcessor
+ * @brief Contains compression and decompression logic for adaptive mode.
+ *
+ * This namespace handles adaptive scanning modes (horizontal and vertical),
+ * evaluates both methods, and chooses the more efficient one (in terms of size).
+ */
 
 namespace AdaptiveProcessor {
-
+/**
+ * @brief Performs adaptive compression using horizontal scanning order.
+ *
+ * Initializes the file and buffer state, reads input block by block in horizontal
+ * order, performs LZSS compression, and returns a BitsetWriter containing the result.
+ *
+ * @param program Reference to the global Program instance.
+ * @return BitsetWriter containing the compressed byte stream.
+ */
 BitsetWriter compress_horizontal(Program &program) {
     auto *buffers = program.buffers;
     auto *file = program.files;
@@ -1165,7 +1476,7 @@ BitsetWriter compress_horizontal(Program &program) {
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, bitset_writer);
         } else {
-            StaticProcessor::compress_literal(program, match, bitset_writer);
+            StaticProcessor::compress_literal(program, bitset_writer);
         }
 
         if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
@@ -1177,6 +1488,15 @@ BitsetWriter compress_horizontal(Program &program) {
     return bitset_writer;
 }
 
+/**
+ * @brief Performs adaptive compression using vertical scanning order.
+ *
+ * Sets the program and file to read vertically, fills buffers, and performs LZSS
+ * compression. Returns a BitsetWriter with the result.
+ *
+ * @param program Reference to the global Program instance.
+ * @return BitsetWriter containing the vertically compressed byte stream.
+ */
 BitsetWriter compress_vertical(Program &program) {
     auto *buffers = program.buffers;
     auto *file = program.files;
@@ -1205,7 +1525,7 @@ BitsetWriter compress_vertical(Program &program) {
         if (match.found) {
             StaticProcessor::compress_compressed(program, match, bitset_writer);
         } else {
-            StaticProcessor::compress_literal(program, match, bitset_writer);
+            StaticProcessor::compress_literal(program, bitset_writer);
         }
 
         if (DEBUG_SHIFTING_BUFFERS_AND_READ_NEW_CHAR) {
@@ -1217,6 +1537,15 @@ BitsetWriter compress_vertical(Program &program) {
     return bitset_writer;
 }
 
+/**
+ * @brief Chooses the better adaptive compression strategy (horizontal or vertical).
+ *
+ * Compares the size of horizontal and vertical compressed outputs, and writes the
+ * more efficient one to the output file. This function performs both compressions
+ * and selects the smallest output.
+ *
+ * @param program Reference to the global Program instance.
+ */
 void compress(Program &program) {
     BitsetWriter horizontal_writer = compress_horizontal(program);
     BitsetWriter vertical_writer = compress_vertical(program);
@@ -1227,15 +1556,25 @@ void compress(Program &program) {
         if (DEBUG) {
             DEBUG_PRINT_LITE("Writing horizontal%c", '\n');
         }
-        horizontal_writer.write_all_to_file(false);
+        horizontal_writer.flush_to_file_after_compression(false);
     } else {
         if (DEBUG) {
             DEBUG_PRINT_LITE("Writing vertical%c", '\n');
         }
-        vertical_writer.write_all_to_file(true);
+        vertical_writer.flush_to_file_after_compression(true);
     }
 }
 
+/**
+ * @brief Performs adaptive decompression based on the metadata in the header.
+ *
+ * Reads compressed tokens (either literal or matched sequences) using BitsetReader,
+ * and reconstructs the original image, considering transposed order if needed.
+ * Final decompressed image is written block-by-block in raster scan order.
+ *
+ * @param program Reference to the global Program instance.
+ * @param header CompressionHeader containing metadata like width, mode, and preprocessing flags.
+ */
 void decompress(Program &program, CompressionHeader &header) {
     //    if (DEBUG) {
     //        DEBUG_PRINT_LITE("Decompress adaptive%c", '\n');
@@ -1277,10 +1616,10 @@ void decompress(Program &program, CompressionHeader &header) {
                           << " | tmp_i: " << tmp_i << std::endl;
             }
 
-            StaticProcessor::decompress_compressed(program, bitset_reader, offset, length);
+            StaticProcessor::decompress_compressed(program, offset, length);
         } else { // Literal token.
             DEBUG_PRINT_LITE("--------------\nis_compressed: %d\n", 0);
-            char char1 = StaticProcessor::decompress_character(program, bitset_reader);
+            StaticProcessor::decompress_character(program, bitset_reader);
             const bool should_stop = bitset_reader.is_at_the_end_of_file();
             //            DEBUG_PRINT_LITE("should_stop: %d\n", should_stop);
             if (should_stop) {
@@ -1288,15 +1627,15 @@ void decompress(Program &program, CompressionHeader &header) {
                 bitset_reader.is_at_the_end_of_file();
                 break;
             }
-            char char2 = StaticProcessor::decompress_character(program, bitset_reader);
+            StaticProcessor::decompress_character(program, bitset_reader);
         }
     }
 
     file->adaptive_blocks.clear();
     if (DEBUG) {
-        DEBUG_PRINT_LITE("Width: %d | Height: %d\n", header.width);
+        DEBUG_PRINT_LITE("Width: %d | Height: %zu\n", header.width, file->adaptive_blocks.size());
     }
-    file->prepare_adaptive_blocks_use_written_data(header.width);
+    file->prepare_adaptive_blocks_for_decompression(header.width, header);
     if (DEBUG) {
         DEBUG_PRINT_LITE("written_data size: %zu\n", file->written_data.size());
     }
@@ -1312,24 +1651,41 @@ void decompress(Program &program, CompressionHeader &header) {
     }
 
     // Write pixels block by block in raster scan order
-    file->write_adaptive_blocks_to_file(header.width);
+    file->write_decompressed_file(header.width);
 }
 } // namespace AdaptiveProcessor
 
+/**
+ * @brief Handles decompression of files that were not compressed.
+ *
+ * This function copies the file byte-by-byte using `get_char()` and `write_char()`
+ * and flushes the result to disk.
+ *
+ * @param program Reference to the main Program object.
+ * @param header The decompression header parsed from the file.
+ */
 void decompress_not_compressed(Program &program, CompressionHeader &header) {
     if (VERBOSE) {
         std::cout << "Decompress not compressed" << std::endl;
     }
     BitsetReader bitset_reader(program, header);
-    auto *file = program.files;
     auto *buffers = program.buffers;
     buffers->window.clear();
     while (!program.files->EOF_reached) {
         program.files->write_char(program.files->get_char());
     }
-    program.files->flush_written_data_to_file();
+    program.files->flush_to_file_not_compressed();
 }
 
+/**
+ * @brief Reads and reconstructs the compression header from the compressed file.
+ *
+ * This reads the first 3 bytes of the input file, extracts bitfields representing
+ * compression flags, and builds a `CompressionHeader` object for use during decompression.
+ *
+ * @param program Reference to the main Program object.
+ * @return CompressionHeader Structure filled with parsed metadata.
+ */
 CompressionHeader pre_decompress(Program &program) {
     uint8_t byte1 = static_cast<uint8_t>(program.files->get_char());
     uint8_t byte2 = static_cast<uint8_t>(program.files->get_char());
@@ -1344,6 +1700,7 @@ CompressionHeader pre_decompress(Program &program) {
     header.mode = (byte1 >> 3) & 0b1;                           // bit 3
     header.passage = (byte1 >> 4) & 0b1;                        // bit 4
     header.is_file_compressed = (byte1 >> 5) & 0b1;             // bit 5
+    header.is_preprocessed = (byte1 >> 6) & 0b1;                // bit 6
     header.width = static_cast<unsigned>(byte2 | (byte3 << 8)); // 16-bit width
 
     std::bitset<8> b1(byte1), b2(byte2), b3(byte3);
@@ -1353,7 +1710,7 @@ CompressionHeader pre_decompress(Program &program) {
         std::cout << "  byte1: " << b1 << " | padding_bits_count: " << int(header.padding_bits_count)
                   << " | mode: " << bool(header.mode) << " | passage: " << bool(header.passage)
                   << " | is_compressed: " << bool(header.is_file_compressed) << " | width: " << header.width
-                  << std::endl;
+                  << " | is_preprocessed: " << bool(header.is_preprocessed) << std::endl;
         std::cout << "  byte2: " << b2 << "\n";
         std::cout << "  byte3: " << b3 << " | width: " << header.width << "\n";
     }
@@ -1361,7 +1718,14 @@ CompressionHeader pre_decompress(Program &program) {
     return header;
 }
 
-// NEW: Function to calculate and print compression ratio.
+/**
+ * @brief Calculates and prints the compression ratio between two files.
+ *
+ * The ratio is calculated as `(compressed / original) * 100`, and printed if `DEBUG` is enabled.
+ *
+ * @param originalFile Path to the original (uncompressed) file.
+ * @param compressedFile Path to the compressed file.
+ */
 void print_compression_ratio(const std::string &originalFile, const std::string &compressedFile) {
     std::uintmax_t originalSize = std::filesystem::file_size(originalFile);
     std::uintmax_t compressedSize = std::filesystem::file_size(compressedFile);
@@ -1373,9 +1737,20 @@ void print_compression_ratio(const std::string &originalFile, const std::string 
     }
 }
 
-//------------------------------------------------------------------------------
-// Function
-//------------------------------------------------------------------------------
+/**
+ * @brief Initializes the `Program` structure including files and buffers.
+ *
+ * This function allocates and initializes:
+ * - the main `Program` object
+ * - its `File` wrapper (which loads the file into memory)
+ * - its `Buffer` for LZSS compression
+ *
+ * Also verifies format if adaptive mode is used.
+ *
+ * @param argc Argument count from `main()`.
+ * @param argv Argument vector from `main()`.
+ * @return Pointer to a fully initialized `Program` object.
+ */
 Program *init_program(int argc, char **argv) {
     // ------------------
     // Initialization
@@ -1402,10 +1777,28 @@ Program *init_program(int argc, char **argv) {
     return program;
 }
 
+/**
+ * @brief Utility to print ASCII value of a given character.
+ *
+ * @param _char Character to convert to ASCII.
+ */
 void print_char_ascii_value(char _char) {
     std::cout << "The ASCII value of '" << _char << "' is: " << static_cast<int>(_char) << std::endl;
 }
 
+/**
+ * @brief Entry point for the LZSS compression and decompression tool.
+ *
+ * Parses command-line arguments and determines which mode to run:
+ * - Compression (static or adaptive)
+ * - Decompression (based on header mode)
+ *
+ * Includes error handling, logging (via DEBUG), and memory cleanup.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on success, 1 on error.
+ */
 int main(int argc, char **argv) {
     Program *program = nullptr;
 
@@ -1448,6 +1841,7 @@ int main(int argc, char **argv) {
         // ------------------
         std::cerr << err.what() << std::endl;
         std::cerr << program;
+        delete program->files;
         delete program->buffers;
         delete program;
         return 1;
@@ -1463,6 +1857,7 @@ int main(int argc, char **argv) {
     // ------------------
     // Clean up
     // ------------------
+    delete program->files;
     delete program->buffers;
     delete program;
     return 0;
