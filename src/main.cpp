@@ -7,7 +7,9 @@
 
 // TODO
 // - test on merlin
-// - komentare vsecho vcetne souboruove hlavicky a kazde funkce a tridy a vseho dalsiho...
+// - comment everything: headers for file, function class and everything else including parameters, describe each define
+// and each constant properly
+// - Finish docs
 
 //------------------------------------------------------------------------------
 // Includes
@@ -28,27 +30,13 @@
 // Constants
 //------------------------------------------------------------------------------
 static const std::size_t FLAG_SIZE_BITS = 1;
-
-static const std::size_t OFFSET_SIZE_BITS = 13;
-static const std::size_t LENGTH_SIZE_BITS = 5;
-// static const std::size_t LENGTH_SIZE_BITS = 6; // TODO
-
-// static const std::size_t WINDOW_SIZE = (1 << WINDOW_SIZE_BITS);
-// static const std::size_t LOOKAHEAD_SIZE = (1 << LOOKAHEAD_SIZE_BITS);
-
-static const std::size_t MIN_MATCH_LENGTH = 3;
+static const std::size_t OFFSET_SIZE_BITS = 13; // 2^13 = 8192 bytes for search buffer
+static const std::size_t LENGTH_SIZE_BITS = 5;  // 2^5 = 32 bytes for look-ahead buffer
+static const std::size_t MIN_MATCH_LENGTH = 3;  // At least match 3 characters to do compression
 static const std::size_t LITERAL_SIZE = MIN_MATCH_LENGTH - 1;
-static const std::size_t LITERAL_SIZE_BITS = LITERAL_SIZE * 8;
 static const std::size_t CHARACTER_SIZE_BITS = 8;
-
-static const int BLOCK_W = 16;
-static const int BLOCK_H = 16;
-// static const int BLOCK_W = 8;
-// static const int BLOCK_H = 8;
-//  static const int BLOCK_W = 4;
-//  static const int BLOCK_H = 4;
-//  static const int BLOCK_W = 2;
-//  static const int BLOCK_H = 2;
+static const std::size_t ADAPTIVE_BLOCK_WIDTH = 16;
+static const std::size_t ADAPTIVE_BLOCK_HEIGHT = 16;
 
 //------------------------------------------------------------------------------
 // Macros
@@ -429,7 +417,7 @@ class File {
     }
 
     void prepare_adaptive_blocks_for_compression(int image_width) {
-        const int block_size = BLOCK_W * BLOCK_H;
+        const int block_size = ADAPTIVE_BLOCK_WIDTH * ADAPTIVE_BLOCK_HEIGHT;
 
         if (DEBUG) {
             DEBUG_PRINT_LITE("Preparing adaptive blocks - image width: %d | buffer_size: %zu\n", image_width,
@@ -483,7 +471,7 @@ class File {
         }
     }
     void prepare_adaptive_blocks_for_decompression(int image_width, CompressionHeader &header) {
-        const int block_size = BLOCK_W * BLOCK_H;
+        const int block_size = ADAPTIVE_BLOCK_WIDTH * ADAPTIVE_BLOCK_HEIGHT;
 
         DEBUG_PRINT_LITE("Preparing adaptive blocks from written data - image width: %d | total bytes: %zu\n",
                          image_width, written_data.size());
@@ -528,10 +516,10 @@ class File {
     }
 
     std::vector<uint8_t> transpose_block(const std::vector<uint8_t> &block) {
-        std::vector<uint8_t> result(BLOCK_H * BLOCK_W, 0);
-        for (int y = 0; y < BLOCK_H; ++y) {
-            for (int x = 0; x < BLOCK_W; ++x) {
-                result[x * BLOCK_H + y] = block[y * BLOCK_W + x];
+        std::vector<uint8_t> result(ADAPTIVE_BLOCK_HEIGHT * ADAPTIVE_BLOCK_WIDTH, 0);
+        for (int y = 0; y < ADAPTIVE_BLOCK_HEIGHT; ++y) {
+            for (int x = 0; x < ADAPTIVE_BLOCK_WIDTH; ++x) {
+                result[x * ADAPTIVE_BLOCK_HEIGHT + y] = block[y * ADAPTIVE_BLOCK_WIDTH + x];
             }
         }
         return result;
@@ -647,7 +635,7 @@ class File {
             throw std::runtime_error("Output stream is not open.");
         }
 
-        const int blocks_per_row = width / BLOCK_W;
+        const int blocks_per_row = width / ADAPTIVE_BLOCK_WIDTH;
         const int total_blocks = adaptive_blocks.size();
         const int blocks_per_col = total_blocks / blocks_per_row;
 
@@ -682,7 +670,7 @@ class File {
             throw std::runtime_error("Invalid image width");
         }
 
-        if (width % BLOCK_W != 0) {
+        if (width % ADAPTIVE_BLOCK_WIDTH != 0) {
             throw std::runtime_error("Image width is not divisible by block width");
         }
 
@@ -693,7 +681,7 @@ class File {
                                      " is not divisible by image width: " + std::to_string(width));
         }
 
-        if (height % BLOCK_H != 0) {
+        if (height % ADAPTIVE_BLOCK_HEIGHT != 0) {
             throw std::runtime_error("Image height is not divisible by block height");
         }
     }
