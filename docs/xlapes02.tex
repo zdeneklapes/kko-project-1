@@ -49,153 +49,138 @@
 
 % ------------------------------------------------------------------------------
 
-    \section*{Abstract}
-    This project implements a modular compression and decompression tool based on the LZSS (Lempel–Ziv–Storer–Szymanski) algorithm. While the core compression logic follows the traditional LZSS scheme, the goal of this work is not to analyze LZSS as a method, but rather to present a concrete implementation that supports both static and adaptive approaches with optional preprocessing using delta encoding.
-
-    The compressor supports command-line usage for compression, decompression, and delta-preprocessing of plain text files. It is implemented in C++14, with an emphasis on maintainability, clarity of structure, and extensibility.
-
-    The output format is standardized and supports optional transformation of input data through delta encoding to improve compression efficiency on numeric sequences.
-
-% ------------------------------------------------------------------------------
-
-
     \section{Introduction}
-    This document describes the implementation of an LZ-based compression tool enhanced with optional preprocessing using delta encoding. The program supports both static and adaptive modes and is designed to handle raw image files effectively.
+
+    This project implements a modular compression and decompression tool based on the LZSS (Lempel–Ziv–Storer–Szymanski) algorithm. The core compression logic follows the traditional LZSS scheme, and the approach presented in this work provides both static and adaptive compression modes. These modes support multiple traversal strategies of the input image, with optional preprocessing using delta encoding.
+
+    The compressor supports command-line usage for compression, decompression, and delta preprocessing of raw
+    images. The tool is implemented in C++17.
+
+    The output format is standardized and optionally includes delta-encoded transformations to improve compression efficiency on smoothly varying numeric sequences.
 
 % ------------------------------------------------------------------------------
-
 
     \section{Project Goals}
     The goal of this project was to:
     \begin{itemize}
-        \item Implement a lossless compression tool using the LZ77 algorithm.
+        \item Implement a lossless compression tool using the LZSS algorithm.
         \item Add optional delta preprocessing to improve compression ratio.
-        \item Support both static (sequential) and adaptive (block-based) image traversal.
+        \item Support both static (sequential) and adaptive (block-based) image traversal of raw images that are
+        multiples of 16 pixels in width or height.
         \item Provide efficient decompression that restores the original data.
     \end{itemize}
 
 % ------------------------------------------------------------------------------
 
-
-    \section{Project Structure and Implementation}
-
-    The project is divided into three main parts:
-    \begin{enumerate}
-        \item \textbf{Compressor:} Encodes input data using LZSS. The compressor supports two dictionary strategies:
-        \begin{itemize}
-            \item \emph{Static compression:} the dictionary is constructed from the entire file.
-            \item \emph{Adaptive compression:} the dictionary is built dynamically during compression.
-        \end{itemize}
-        \item \textbf{Decompressor:} Fully reconstructs the original input file from the token stream produced by the compressor. The decoding is efficient due to the format of the tokens (offset, length, next symbol or literal).
-        \item \textbf{Delta Encoder/Decoder:} Optional preprocessing step for the compressor and postprocessing step for the decompressor. It transforms the input by storing differences between adjacent characters, which helps improve compression ratios on sequences with slowly varying values (e.g., numeric logs).
-    \end{enumerate}
-
-    The tool works with input files from specified directories and writes the output to structured folders for compressed and decompressed results. It was tested on various datasets with both static and adaptive compression settings.
-
-
-% ------------------------------------------------------------------------------
-
-
-    \section{Architecture Overview}
-    The program is structured into several key components:
-    \begin{itemize}
-        \item \textbf{Program Parser:} Parses command-line arguments and initializes the application.
-        \item \textbf{File Handler:} Reads and writes files in binary form. It supports adaptive reading using blocks.
-        \item \textbf{Buffer Manager:} Maintains a sliding window and lookahead buffer for LZ77.
-        \item \textbf{Compressor and Decompressor:} Handles the core logic of LZ encoding/decoding.
-        \item \textbf{Bit Writers/Readers:} Encodes bits efficiently to minimize file size.
-    \end{itemize}
-
-% ------------------------------------------------------------------------------
-
-
     \section{Compression Logic}
 
-    \subsection{LZ77 Encoding}
-    Each byte is scanned with a sliding window. If a match is found, the offset and length are stored; otherwise, a literal is saved.
+    \includegraphics[width=1\textwidth]{template-fig/compressor}\par\vspace{1cm}
 
-    \subsection{Static vs. Adaptive}
+    The compression process begins with reading the input image data, optionally applying delta preprocessing, and compressing the result using an LZSS-based method. The goal is to select the most space-efficient output between multiple alternatives.
+
+    \subsection*{Static vs. Adaptive Modes}
+
+    The algorithm supports two main strategies:
+
     \begin{itemize}
-        \item \textbf{Static mode} reads the file linearly.
-        \item \textbf{Adaptive mode} splits the image into $16 \times 16$ blocks and reads either row-wise or column-wise.
+        \item \textbf{Static compression} processes the image sequentially, byte-by-byte, from top to bottom, left to right. This approach is suitable for uniformly structured data.
+
+        \item \textbf{Adaptive compression} divides the image into $16 \times 16$ blocks. Each block is compressed independently, and both horizontal and vertical orientations are evaluated. The orientation yielding the smallest output is selected. This mode requires that both the width and height of the image be divisible by 16.
     \end{itemize}
+
+    In both modes, delta preprocessing can be applied beforehand to transform input into byte differences. This often reveals more redundancy in smooth or gradient-based images.
+
+    \subsection*{Compression Pipeline and Implementation Design}
+
+    The compression pipeline transforms input data into a compact binary format through four main stages, supported by modular components:
+
+    \begin{enumerate}
+        \item \textbf{Preprocessing:} When delta encoding is enabled via the \texttt{-m} flag, the input data is
+        first transformed by a call to
+        \texttt{delta\_encode()} (e.g.\ within \\ \texttt{File::prepare\_adaptive\_blocks\_for\_compression()} for adaptive mode or directly for static mode). The \texttt{File} class is responsible for loading input data, optionally transposing $16\times16$ blocks (if vertical mode is chosen).
+
+        \item \textbf{LZSS Encoding:} The core compression step uses \texttt{Buffer::brute\_force\_search()} to find the longest match between the lookahead buffer and the sliding window, encapsulated in the \texttt{Buffer} structure. This function returns an \texttt{lz\_match} object, containing the offset, length (limited to 31 bytes to fit within 5 bits), and a boolean indicating if a valid match was found. Matches or literal bytes are emitted accordingly within either \texttt{StaticProcessor::compress()} or \texttt{AdaptiveProcessor::compress()}, depending on the compression mode selected.
+
+        \item \textbf{Bit Encoding:} The matches and literals are encoded into a bitstream by the \texttt{BitsetWriter} class. Additionally, a compact 3-byte header—containing metadata like padding size, compression mode, scan direction, delta flag, and image width—is produced by \texttt{BitsetWriter::flush\_to\_file\_after\_compression()}.
+
+        \item \textbf{Comparison and Output Selection:} Specifically for adaptive mode, the algorithm compares
+        horizontal and vertical block traversals, selecting whichever yields a smaller bitstream. If the compressed
+        size exceeds or equals the original, the \texttt{BitsetWriter} chooses to store the original input
+        uncompressed (still with a header for decompression purposes).
+    \end{enumerate}
+
+    These components collaborate within the \texttt{StaticProcessor} and \texttt{AdaptiveProcessor} namespaces, depending on the selected mode.
 
 % ------------------------------------------------------------------------------
 
+    \section{Decompression Logic}
 
-    \section{Delta Encoding (Preprocessing)}
-    Delta encoding is optionally applied before LZ compression. It transforms the input into differences between neighboring bytes:
+    \includegraphics[width=1\textwidth]{template-fig/decompressor}\par\vspace{1cm}
+
+    Decompression reverses the process, reconstructing the original file from the compressed bitstream and metadata.
+
+    \subsection*{Decompression Pipeline}
+
+    The decompression process restores the original data using metadata and the compressed bitstream. The main steps and components are:
+
     \begin{itemize}
-        \item \textbf{Encoding:} Replaces each byte with the difference from the previous one.
-        \item \textbf{Decoding:} Reconstructs original values by summing the differences.
+        \item \textbf{Header parsing:} The function \texttt{pre\_decompress(Program\&)} reads the first 3 bytes of the file via \texttt{File::get\_char()} and decodes them into a \texttt{CompressionHeader} struct containing compression mode, scan direction, padding, delta flag, and image width.
+
+        \item \textbf{Bit decoding:} The \texttt{BitsetReader} class extracts literal bytes and \texttt{(offset, length)} matches from the compressed bitstream.
+
+        \item \textbf{Data reconstruction:} Based on the parsed header, either \texttt{StaticProcessor::decompress()} or \texttt{AdaptiveProcessor::decompress()} is invoked to rebuild the data, either sequentially or block-wise with optional transposition.
+
+        \item \textbf{Postprocessing:} If delta encoding was used, the function \texttt{delta\_decode()} restores original byte values by reversing the difference encoding.
+
+        \item \textbf{Output writing:} The \texttt{File} class writes the fully reconstructed data to memory (in \texttt{File::written\_data}) and finally flushes it to the output file.
     \end{itemize}
-    This step can improve compression, especially for smooth images or gradual value transitions.
 
-% ------------------------------------------------------------------------------
-
-
-    \section{Decompression}
-    The decompression reconstructs the original file based on the LZ tokens (offset + length) or literals. If delta preprocessing was used, it is reversed at this stage.
-
-% ------------------------------------------------------------------------------
-
-
-    \section{Command-Line Interface}
-    Supported options:
-    \begin{itemize}
-        \item \texttt{-c}: Compress
-        \item \texttt{-d}: Decompress
-        \item \texttt{-i <input>}: Input file
-        \item \texttt{-o <output>}: Output file
-        \item \texttt{-w <width>}: Image width (required for adaptive)
-        \item \texttt{-a}: Enable adaptive mode
-        \item \texttt{-m}: Enable delta encoding
-    \end{itemize}
+    This pipeline ensures lossless restoration of the original input, preserving both structure and content across various compression modes.
 
 % ------------------------------------------------------------------------------
     \section{Results}
     {
         \scriptsize
-        \begin{tabular}{lrrrrr}
+        \begin{tabular}{lrrrrrrr}
             \hline
-            Test                               & Original (B) & Compressed (B) & Ratio (\%) & OK? & Times (s)        \\
+            Test                               & Original(B) & Compressed(B) & Ratio(\%) & Entropy & OK? & Times(s)        \\
             \hline
-            cb.raw (static)                    & 262144       & 20122          & 7.68       & OK  & C:0.165 D:0.029  \\
-            cb.raw (static + preprocess)       & 262144       & 20156          & 7.69       & OK  & C:0.270 D:0.030  \\
-            cb.raw (adaptive)                  & 262144       & 20122          & 7.68       & OK  & C:0.481 D:0.031  \\
-            cb.raw (adaptive + preprocess)     & 262144       & 20125          & 7.68       & OK  & C:1.636 D:0.032  \\
-            cb2.raw (static)                   & 262144       & 21099          & 8.05       & OK  & C:0.336 D:0.030  \\
-            cb2.raw (static + preprocess)      & 262144       & 22191          & 8.47       & OK  & C:1.178 D:0.030  \\
-            cb2.raw (adaptive)                 & 262144       & 21099          & 8.05       & OK  & C:2.853 D:0.031  \\
-            cb2.raw (adaptive + preprocess)    & 262144       & 24284          & 9.26       & OK  & C:4.768 D:0.039  \\
-            df1h.raw (static)                  & 262144       & 20341          & 7.76       & OK  & C:0.114 D:0.029  \\
-            df1h.raw (static + preprocess)     & 262144       & 20099          & 7.67       & OK  & C:0.114 D:0.030  \\
-            df1h.raw (adaptive)                & 262144       & 20341          & 7.76       & OK  & C:0.408 D:0.030  \\
-            df1h.raw (adaptive + preprocess)   & 262144       & 20099          & 7.67       & OK  & C:0.410 D:0.032  \\
-            df1hvx.raw (static)                & 262144       & 23914          & 9.12       & OK  & C:1.819 D:0.032  \\
-            df1hvx.raw (static + preprocess)   & 262144       & 22495          & 8.58       & OK  & C:2.432 D:0.033  \\
-            df1hvx.raw (adaptive)              & 262144       & 23914          & 9.12       & OK  & C:14.516 D:0.035 \\
-            df1hvx.raw (adaptive + preprocess) & 262144       & 23044          & 8.79       & OK  & C:15.222 D:0.034 \\
-            df1v.raw (static)                  & 262144       & 25285          & 9.65       & OK  & C:3.333 D:0.034  \\
-            df1v.raw (static + preprocess)     & 262144       & 20101          & 7.67       & OK  & C:0.117 D:0.029  \\
-            df1v.raw (adaptive)                & 262144       & 25285          & 9.65       & OK  & C:7.229 D:0.040  \\
-            df1v.raw (adaptive + preprocess)   & 262144       & 21767          & 8.30       & OK  & C:7.288 D:0.034  \\
-            shp.raw (static)                   & 262144       & 20155          & 7.69       & OK  & C:0.173 D:0.032  \\
-            shp.raw (static + preprocess)      & 262144       & 20157          & 7.69       & OK  & C:0.167 D:0.032  \\
-            shp.raw (adaptive)                 & 262144       & 20108          & 7.67       & OK  & C:0.496 D:0.035  \\
-            shp.raw (adaptive + preprocess)    & 262144       & 20103          & 7.67       & OK  & C:0.494 D:0.036  \\
-            shp1.raw (static)                  & 262144       & 28786          & 10.98      & OK  & C:4.983 D:0.035  \\
-            shp1.raw (static + preprocess)     & 262144       & 29149          & 11.12      & OK  & C:4.625 D:0.035  \\
-            shp1.raw (adaptive)                & 262144       & 21311          & 8.13       & OK  & C:9.105 D:0.035  \\
-            shp1.raw (adaptive + preprocess)   & 262144       & 21600          & 8.24       & OK  & C:9.000 D:0.035  \\
-            shp2.raw (static)                  & 262144       & 37010          & 14.12      & OK  & C:7.320 D:0.040  \\
-            shp2.raw (static + preprocess)     & 262144       & 39827          & 15.19      & OK  & C:7.595 D:0.042  \\
-            shp2.raw (adaptive)                & 262144       & 28177          & 10.75      & OK  & C:13.083 D:0.037 \\
-            shp2.raw (adaptive + preprocess)   & 262144       & 29764          & 11.35      & OK  & C:13.013 D:0.039 \\
-            nk01.raw (static)                  & 262144       & 262147         & 100.00     & OK  & C:38.210 D:0.089 \\
-            nk01.raw (static + preprocess)     & 262144       & 262147         & 100.00     & OK  & C:39.182 D:0.088 \\
-            nk01.raw (adaptive)                & 262144       & 262147         & 100.00     & OK  & C:76.903 D:0.086 \\
-            nk01.raw (adaptive + preprocess)   & 262144       & 262147         & 100.00     & OK  & C:76.703 D:0.086 \\
+            cb.raw (static)                    & 262144      & 20122         & 7.68      & 1.00    & OK  & C:0.039 D:0.010 \\
+            cb.raw (static + preprocess)       & 262144      & 20156         & 7.69      & 1.00    & OK  & C:0.038 D:0.014 \\
+            cb.raw (adaptive)                  & 262144      & 20122         & 7.68      & 1.00    & OK  & C:0.114 D:0.012 \\
+            cb.raw (adaptive + preprocess)     & 262144      & 20125         & 7.68      & 1.00    & OK  & C:0.217 D:0.015 \\
+            cb2.raw (static)                   & 262144      & 21099         & 8.05      & 6.91    & OK  & C:0.059 D:0.014 \\
+            cb2.raw (static + preprocess)      & 262144      & 22191         & 8.47      & 6.91    & OK  & C:0.107 D:0.011 \\
+            cb2.raw (adaptive)                 & 262144      & 21099         & 8.05      & 6.91    & OK  & C:0.317 D:0.013 \\
+            cb2.raw (adaptive + preprocess)    & 262144      & 24284         & 9.26      & 6.91    & OK  & C:0.536 D:0.016 \\
+            df1h.raw (static)                  & 262144      & 20341         & 7.76      & 8.00    & OK  & C:0.027 D:0.011 \\
+            df1h.raw (static + preprocess)     & 262144      & 20099         & 7.67      & 8.00    & OK  & C:0.028 D:0.014 \\
+            df1h.raw (adaptive)                & 262144      & 20341         & 7.76      & 8.00    & OK  & C:0.088 D:0.019 \\
+            df1h.raw (adaptive + preprocess)   & 262144      & 20099         & 7.67      & 8.00    & OK  & C:0.112 D:0.018 \\
+            df1hvx.raw (static)                & 262144      & 23914         & 9.12      & 4.51    & OK  & C:0.195 D:0.017 \\
+            df1hvx.raw (static + preprocess)   & 262144      & 22495         & 8.58      & 4.51    & OK  & C:0.263 D:0.014 \\
+            df1hvx.raw (adaptive)              & 262144      & 23914         & 9.12      & 4.51    & OK  & C:1.502 D:0.019 \\
+            df1hvx.raw (adaptive + preprocess) & 262144      & 23044         & 8.79      & 4.51    & OK  & C:1.577 D:0.026 \\
+            df1v.raw (static)                  & 262144      & 25285         & 9.65      & 8.00    & OK  & C:0.344 D:0.024 \\
+            df1v.raw (static + preprocess)     & 262144      & 20101         & 7.67      & 8.00    & OK  & C:0.029 D:0.023 \\
+            df1v.raw (adaptive)                & 262144      & 25285         & 9.65      & 8.00    & OK  & C:0.724 D:0.021 \\
+            df1v.raw (adaptive + preprocess)   & 262144      & 21767         & 8.30      & 8.00    & OK  & C:0.583 D:0.018 \\
+            shp.raw (static)                   & 262144      & 20155         & 7.69      & 0.87    & OK  & C:0.037 D:0.014 \\
+            shp.raw (static + preprocess)      & 262144      & 20157         & 7.69      & 0.87    & OK  & C:0.032 D:0.031 \\
+            shp.raw (adaptive)                 & 262144      & 20108         & 7.67      & 0.87    & OK  & C:0.117 D:0.026 \\
+            shp.raw (adaptive + preprocess)    & 262144      & 20103         & 7.67      & 0.87    & OK  & C:0.123 D:0.017 \\
+            shp1.raw (static)                  & 262144      & 28786         & 10.98     & 1.90    & OK  & C:0.441 D:0.036 \\
+            shp1.raw (static + preprocess)     & 262144      & 29149         & 11.12     & 1.90    & OK  & C:0.442 D:0.021 \\
+            shp1.raw (adaptive)                & 262144      & 21311         & 8.13      & 1.90    & OK  & C:0.828 D:0.016 \\
+            shp1.raw (adaptive + preprocess)   & 262144      & 21600         & 8.24      & 1.90    & OK  & C:0.805 D:0.016 \\
+            shp2.raw (static)                  & 262144      & 37010         & 14.12     & 1.87    & OK  & C:0.736 D:0.013 \\
+            shp2.raw (static + preprocess)     & 262144      & 39827         & 15.19     & 1.87    & OK  & C:0.745 D:0.015 \\
+            shp2.raw (adaptive)                & 262144      & 28177         & 10.75     & 1.87    & OK  & C:1.300 D:0.019 \\
+            shp2.raw (adaptive + preprocess)   & 262144      & 29764         & 11.35     & 1.87    & OK  & C:1.324 D:0.016 \\
+            nk01.raw (static)                  & 262144      & 262147        & 100.00    & 6.47    & OK  & C:3.900 D:0.027 \\
+            nk01.raw (static + preprocess)     & 262144      & 262147        & 100.00    & 6.47    & OK  & C:3.867 D:0.040 \\
+            nk01.raw (adaptive)                & 262144      & 262147        & 100.00    & 6.47    & OK  & C:7.616 D:0.036 \\
+            nk01.raw (adaptive + preprocess)   & 262144      & 262147        & 100.00    & 6.47    & OK  & C:7.688 D:0.029 \\
             \hline
         \end{tabular}
     }
@@ -203,33 +188,25 @@
 
 % ------------------------------------------------------------------------------
 
-
     \section{Testing}
 
-    To verify the correctness and performance of the compression and decompression pipeline, a dedicated shell script \texttt{test.sh} was created. This script automates a series of tests by executing the compression and decompression pipeline across multiple predefined datasets.
+    The project includes a dedicated Python benchmarking script \texttt{benchmarks.py} that automates testing of the
+    compression and decompression functionality.
 
-    The tests fall into two categories:
+    The script processes benchmark datasets provided in \texttt{tests/in/kko.proj.data}. For each file, it performs:
 
     \begin{itemize}
-        \item \textbf{Custom Tests:} These include small to medium-sized manually created text files located in the \texttt{tests/in/static} and \texttt{tests/in/adaptive} directories. The files test a variety of scenarios including short sequences, repeated patterns, and edge cases in the compressor behavior.
-
-        \item \textbf{Benchmark Data:} The official input data provided by the instructor (located in \texttt{zadani/kko.proj.data}) was used to assess performance on real-world structured data. This includes both grayscale image byte data and synthetic data files.
+        \item Compression in four modes: static, static with delta, adaptive, adaptive with delta.
+        \item Decompression and byte-for-byte comparison with the original file to ensure correctness.
+        \item Measurement of compression ratios and execution times.
+        \item Entropy calculation to evaluate data compressibility.
     \end{itemize}
 
-    The \texttt{test.sh} script handles:
-    \begin{enumerate}
-        \item Running the compressor with appropriate arguments (static, adaptive, delta-encoded).
-        \item Automatically decompressing the result and comparing it to the original file.
-        \item Verifying correctness via byte-by-byte comparison using \texttt{diff}.
-        \item Checking the compression ratio and optionally reporting warnings if the compressed size exceeds a specified threshold.
-    \end{enumerate}
-
-    The script is located at the root of the project, alongside other key files like the \texttt{Makefile}, \texttt{lz\_codec} binary, and build artifacts. The test output files are saved in \texttt{tests/out}.
-
-    This approach allowed fast iteration and regression testing while modifying the core compression logic. The test set also served to benchmark the effects of delta encoding and block transposition features.
+    All results are printed to stdout in a LaTeX-formatted table, summarizing sizes, ratios, correctness status, time
+    measurements, and entropy. This table helps assess not only functional correctness but also performance
+    characteristics of each mode.
 
 % ------------------------------------------------------------------------------
-
 
     \section{Conclusion}
     The project demonstrates a working implementation of an LZ-based compressor with optional delta encoding and adaptive image traversal. It achieves reasonable compression ratios while maintaining lossless fidelity and supports flexible preprocessing for improved performance on real image data.

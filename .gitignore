@@ -5,10 +5,12 @@ build/
 tmp/
 third_party/
 tests/out/
-tests/in/**/*decompressed*
+tests/**/*decompressed*
 
 
 *.log
+*.pdf
+*.zip
 .DS_Store
 kKO
 lz_codec

@@ -3,6 +3,8 @@ import os
 import subprocess
 import time
 
+import math
+
 ###############################################################################
 # Configuration
 ###############################################################################
@@ -21,8 +23,11 @@ OUT_PATH = "tests/out"
 DECOMPRESSED_PATH = "tests/in/kko.proj.data"  # reused folder, or separate if you prefer
 
 # The list of raw files you want to test. Adjust to your actual file names.
-KKO_FILES = ["cb.raw", "cb2.raw", "df1h.raw", "df1hvx.raw", "df1v.raw",
-             "shp.raw", "shp1.raw", "shp2.raw", "nk01.raw"]
+KKO_FILES = [
+    "cb.raw", "cb2.raw", "df1h.raw", "df1hvx.raw", "df1v.raw",
+    "shp.raw", "shp1.raw",
+    "shp2.raw", "nk01.raw"
+]
 
 # Optionally set a default width if needed:
 DEFAULT_WIDTH = 512
@@ -34,6 +39,30 @@ MEASURE_TIMES = True
 ###############################################################################
 # Helper Functions
 ###############################################################################
+# somewhere above main(), e.g. next to your other helper functions:
+def compute_entropy(file_path):
+    """
+    Reads the entire file as bytes, builds a histogram of [0..255],
+    and computes -sum(p_i * log2(p_i)) in bits/symbol.
+    """
+    if not os.path.isfile(file_path):
+        return 0.0
+    with open(file_path, "rb") as f:
+        data = f.read()
+    size = len(data)
+    if size == 0:
+        return 0.0
+    freq = [0] * 256
+    for b in data:
+        freq[b] += 1
+    entropy = 0.0
+    for c in freq:
+        if c > 0:
+            p = c / size
+            entropy -= p * math.log2(p)
+    return entropy
+
+
 def run_command(cmd):
     """
     Runs a shell command given as a list of strings and returns (exit_code, stdout, stderr).
@@ -95,7 +124,7 @@ def measure_time(func, *args, **kwargs):
 
 
 def run_test(description, input_file, output_file, decompressed_file,
-             compress_args, decompress_args):
+             compress_args, decompress_args, entropy_val):
     """
     Runs a single test:
       1) Compress with 'compress_args'
@@ -117,6 +146,7 @@ def run_test(description, input_file, output_file, decompressed_file,
         "compression_time": 0.0,
         "decompression_time": 0.0,
         "error": "",
+        "entropy": entropy_val,  # store it in results
     }
 
     # 1) Compression
@@ -180,6 +210,12 @@ def main():
         print("❌ Compilation failed:\n", err)
         return
 
+    entropy_map = {}
+    for kko_file in KKO_FILES:
+        input_path = os.path.join(KKO_DATA_PATH, kko_file)
+        ent = compute_entropy(input_path)
+        entropy_map[kko_file] = ent
+
     # Prepare data structure to hold results
     results = []
 
@@ -211,7 +247,7 @@ def main():
             "-d"  # decompress
         ]
         r = run_test(f"{kko_file} (static)", input_path, out_static, dec_static,
-                     cargs_static, dargs_static)
+                     cargs_static, dargs_static, entropy_map[kko_file])
         results.append(r)
 
         # 1b) static + preprocess
@@ -236,7 +272,7 @@ def main():
             # If you require a command line flag for "preprocessed" decode, add it here:
         ]
         r = run_test(f"{kko_file} (static + preprocess)", input_path, out_static_m, dec_static_m,
-                     cargs_static_m, dargs_static_m)
+                     cargs_static_m, dargs_static_m, entropy_map[kko_file])
         results.append(r)
 
         # 1c) adaptive
@@ -258,7 +294,7 @@ def main():
             "-d"
         ]
         r = run_test(f"{kko_file} (adaptive)", input_path, out_adaptive, dec_adaptive,
-                     cargs_adaptive, dargs_adaptive)
+                     cargs_adaptive, dargs_adaptive, entropy_map[kko_file])
         results.append(r)
 
         # 1d) adaptive + preprocess
@@ -282,14 +318,14 @@ def main():
             # Similarly, if your code needs "-m" for decoding the preprocessed scenario, add it:
         ]
         r = run_test(f"{kko_file} (adaptive + preprocess)", input_path, out_adaptive_m, dec_adaptive_m,
-                     cargs_adaptive_m, dargs_adaptive_m)
+                     cargs_adaptive_m, dargs_adaptive_m, entropy_map[kko_file])
         results.append(r)
 
     # 2) Print final summary with a LaTeX table
     print("\nAll tests done. Printing results as a LaTeX table:\n")
-    print(r"\begin{tabular}{lrrrrr}")
+    print(r"\begin{tabular}{lrrrrrrr}")
     print(r"\hline")
-    print(r"Test & Original (B) & Compressed (B) & Ratio (\%) & OK? & Times (s)\\")
+    print(r"Test & Original(B) & Compressed(B) & Ratio(\%) & Entropy & OK? & Times(s)\\")
     print(r"\hline")
 
     for r in results:
@@ -300,8 +336,9 @@ def main():
         ctime_str = f"{r['compression_time']:.3f}"
         dtime_str = f"{r['decompression_time']:.3f}"
         time_str = f"C:{ctime_str} D:{dtime_str}"
+        ent_str = f"{r['entropy']:.2f}"
 
-        print(f"{r['description']} & {r['orig_size']} & {r['comp_size']} & {ratio_str} & {ok_str} & {time_str} \\\\")
+        print( f"{r['description']} & {r['orig_size']} & {r['comp_size']} & {ratio_str} & {ent_str} & {ok_str} & {time_str} \\\\")
 
     print(r"\hline")
     print(r"\end{tabular}")
