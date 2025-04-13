@@ -9,7 +9,7 @@ import math
 # Configuration
 ###############################################################################
 # Path to your lz_codec binary after compilation. By default, we assume it's
-# built in the current directory or set to something like 'build/lz_codec'.
+# built in the current directory.
 EXECUTABLE = "./lz_codec"
 
 # The directory containing your "kko.proj.data" files (uncompressed).
@@ -24,9 +24,10 @@ DECOMPRESSED_PATH = "tests/in/kko.proj.data"  # reused folder, or separate if yo
 
 # The list of raw files you want to test. Adjust to your actual file names.
 KKO_FILES = [
-    "cb.raw", "cb2.raw", "df1h.raw", "df1hvx.raw", "df1v.raw",
-    "shp.raw", "shp1.raw",
-    "shp2.raw", "nk01.raw"
+    "cb.raw", "cb2.raw",
+    "df1h.raw", "df1hvx.raw", "df1v.raw",
+    "shp.raw", "shp1.raw", "shp2.raw",
+    "nk01.raw"
 ]
 
 # Optionally set a default width if needed:
