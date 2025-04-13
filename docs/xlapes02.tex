@@ -7,6 +7,9 @@
 \usepackage{parskip}
 \usepackage{setspace}
 \usepackage{enumitem}
+\usepackage{hyperref}  % Recommended: enables \url and clickable links
+\usepackage{url}  % Enables \url but no active links
+
 
 \geometry{margin=2.5cm}
 \setstretch{1.2}
@@ -49,6 +52,7 @@
 
 % ------------------------------------------------------------------------------
 
+
     \section{Introduction}
 
     This project implements a modular compression and decompression tool based on the LZSS (Lempel–Ziv–Storer–Szymanski) algorithm. The core compression logic follows the traditional LZSS scheme, and the approach presented in this work provides both static and adaptive compression modes. These modes support multiple traversal strategies of the input image, with optional preprocessing using delta encoding.
@@ -59,6 +63,7 @@
     The output format is standardized and optionally includes delta-encoded transformations to improve compression efficiency on smoothly varying numeric sequences.
 
 % ------------------------------------------------------------------------------
+
 
     \section{Project Goals}
     The goal of this project was to:
@@ -71,6 +76,29 @@
     \end{itemize}
 
 % ------------------------------------------------------------------------------
+
+    \section{Command-Line Integration}
+
+    The central entry point of the tool is provided by the \texttt{Program} class, which coordinates:
+    \begin{itemize}
+        \item \textbf{Argument parsing}, using the \texttt{argparse} librar~\cite{argparse_repo},
+        \item \textbf{File handling}, provided by a \texttt{File} instance that loads input data and manages output buffers,
+        \item \textbf{Buffer management}, provided by a \texttt{Buffer} instance that tracks the sliding window and lookahead buffer for LZSS compression.
+    \end{itemize}
+
+    In the \texttt{main()} function, a new \texttt{Program} object is initialized and its \texttt{parse\_arguments()} method is called. This uses \texttt{argparse} to set flags for:
+    \begin{itemize}
+        \item \texttt{-c} (compression),
+        \item \texttt{-d} (decompression),
+        \item \texttt{-a} (adaptive mode),
+        \item \texttt{-m} (delta encoding).
+    \end{itemize}
+
+    Additionally, \texttt{Program} stores references to \texttt{File} and \texttt{Buffer}, which it instantiates in \texttt{init\_program()}. This design cleanly separates command-line parsing from the compression workflow: once the \texttt{Program} object is set up, it calls the respective compression or decompression routines in \texttt{StaticProcessor} or \texttt{AdaptiveProcessor}, depending on the selected flags.
+
+
+% ------------------------------------------------------------------------------
+
 
     \section{Compression Logic}
 
@@ -112,6 +140,7 @@
     These components collaborate within the \texttt{StaticProcessor} and \texttt{AdaptiveProcessor} namespaces, depending on the selected mode.
 
 % ------------------------------------------------------------------------------
+
 
     \section{Decompression Logic}
 
@@ -188,32 +217,43 @@
 
 % ------------------------------------------------------------------------------
 
+
     \section{Testing}
 
-    The project includes a dedicated Python benchmarking script \texttt{benchmarks.py} that automates testing of the
-    compression and decompression functionality.
+    The project includes two dedicated scripts for verifying compression and decompression functionality:
 
-    The script processes benchmark datasets provided in \texttt{tests/in/kko.proj.data}. For each file, it performs:
+    The primary benchmarking script, \texttt{benchmark.py}, automates performance tests on benchmark datasets located in \texttt{tests/in/kko.proj.data}. For each input file, it performs:
 
     \begin{itemize}
-        \item Compression in four modes: static, static with delta, adaptive, adaptive with delta.
-        \item Decompression and byte-for-byte comparison with the original file to ensure correctness.
+        \item Compression in four modes: static, static with delta encoding, adaptive, and adaptive with delta encoding.
+        \item Decompression followed by byte-for-byte comparison with the original data to verify correctness.
         \item Measurement of compression ratios and execution times.
-        \item Entropy calculation to evaluate data compressibility.
+        \item Calculation of entropy to evaluate data compressibility.
     \end{itemize}
 
-    All results are printed to stdout in a LaTeX-formatted table, summarizing sizes, ratios, correctness status, time
-    measurements, and entropy. This table helps assess not only functional correctness but also performance
-    characteristics of each mode.
+    The script outputs a LaTeX-formatted summary table to stdout, detailing file sizes, compression ratios, correctness status, timing, and entropy. This enables comprehensive performance and correctness evaluation across different modes.
+
+    Additionally, the \texttt{test.sh} script facilitates quick iterative testing and debugging using both benchmark and custom datasets. This script emphasizes correctness verification and helped identify issues during development by running predefined compression and decompression scenarios.
+
 
 % ------------------------------------------------------------------------------
+
 
     \section{Conclusion}
     The project demonstrates a working implementation of an LZ-based compressor with optional delta encoding and adaptive image traversal. It achieves reasonable compression ratios while maintaining lossless fidelity and supports flexible preprocessing for improved performance on real image data.
 
     \vfill
-    \begin{center}
-        \textit{Thank you for reading!}
-    \end{center}
 
+%    \begin{center}
+%        \textit{Congratulations! You have read the entire project documentation!}
+%    \end{center}
+
+    \newpage
+
+    % At the very end of your .tex file (before \end{document}):
+    \bibliographystyle{bib-styles/Pysny/enplain}
+    %  \bibliographystyle{alpha}
+    \begin{flushleft}
+        \bibliography{xlapes02-20-literatura-bibliography}
+    \end{flushleft}
 \end{document}

@@ -1,4 +1,4 @@
-# Cryptography Project 2 – LZSS Compression
+# Cryptography Project – LZSS Compression
 
 ## Task
 
@@ -83,13 +83,13 @@ Decompress a file:
 
 ## Testing
 
-Automated tests can be run using the provided Python benchmark script [benchmarks.py](./benchmarks.py). This script
+Automated tests can be run using the provided Python benchmark script [benchmark.py](./benchmark.py). This script
 verifies correctness, measures performance, and generates a summary table in LaTeX format.
 
 Run all benchmark tests:
 
 ```bash
-python3 benchmarks.py
+python3 benchmark.py
 ```
 
 This script performs:
@@ -108,7 +108,7 @@ Results are printed to the console and formatted as a LaTeX table for inclusion 
 - `tests/in/`: Input data for testing (including custom and benchmark datasets).
 - `tests/out/`: Output data from tests.
 - `Makefile`: Build instructions.
-- `benchmarks.py`: Automated testing and benchmarking script.
+- `benchmark.py`: Automated testing and benchmarking script.
 - `test.sh`: Run tests on both benchmark and custom datasets (focused on debugging).
 
 ---

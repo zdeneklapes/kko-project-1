@@ -54,15 +54,15 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 
 # Remove build artifacts
 clean:
-	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE) compile_commands.json valgrind.log xlapes02.pdf tests/in/kko.proj.data/*decompressed*
+	rm -rf $(BUILDDIR) *.dSYM *.zip $(EXECUTABLE) compile_commands.json valgrind.log xlapes02.pdf tests/in/kko.proj.data/*decompressed* tests/in/static/*decompressed*
 
 doc:
 	$(MAKE) -C docs
-	cp docs/out/xlapes02.pdf .
+	cp docs/out/xlapes02.pdf documentation.pdf
 
 # Example packaging target (adjust files as needed)
-pack:
-	zip -r xlapes02.zip $(SRCDIR)/*.cpp Makefile README.md third_party/argparse/ tests/in/kko.proj.data/ benchmarks.py test.sh Dockerfile docker-compose.yml
+pack: doc
+	zip -r xlapes02.zip $(SRCDIR)/*.cpp Makefile README.md third_party/argparse/ tests/in/kko.proj.data/ tests/in/static/ benchmark.py test.sh Dockerfile docker-compose.yml documentation.pdf
 
 rsync-to-merlin:
 	scp xlapes02.zip eva:/homes/eva/xl/xlapes02

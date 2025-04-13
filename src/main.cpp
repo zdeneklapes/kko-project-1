@@ -5,15 +5,9 @@
  * This project provides a command-line tool for compressing and decompressing grayscale image data using a dictionary
  * compression method (LZSS), with support for preprocessing (delta encoding) and adaptive image traversal.
  *
- * @author Zdeněk Lapeš
+ * @author Zdeněk Lapeš (xlapes02)
  * @date 26/03/2025
  */
-
-// TODO
-// - test on merlin
-// - comment everything: headers for file, function class and everything else including parameters, describe each define
-// and each constant properly
-// - Finish docs
 
 //------------------------------------------------------------------------------
 // Includes
@@ -204,7 +198,7 @@ class Program {
      * @brief Destructor (cleans up parser).
      */
     ~Program() {
-        delete args; // TODO[fixme]: Segmentation fault
+        delete args;
     }
 
     /**
@@ -1097,7 +1091,7 @@ void init_lookahead_buffer(Program &program) {
     for (std::size_t i = 0; i < buffers->max_lookahead_size && !program.files->EOF_reached; i++) {
         char char_to_add = program.files->get_char();
         //        DEBUG_PRINT_LITE("Adding char to lookahead: %c%c", char_to_add, '\n');
-        buffers->lookahead.push_back(char_to_add); // TODO[fixme]: SIGSEGV
+        buffers->lookahead.push_back(char_to_add);
     }
 
     if (DEBUG) {
